@@ -1,3 +1,4 @@
+require('dotenv').config();
 const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
 const axios = require('axios');
 const cheerio = require('cheerio');
@@ -5,10 +6,10 @@ const http = require('http');
 
 // Configuration
 const BASE_URL = 'https://prehraj.to';
-const TMDB_API_KEY = process.env.TMDB_KEY'; // Očekává se v Renderu jako proměnná prostředí
+const TMDB_API_KEY = process.env.TMDB_KEY; // Načítá z .env nebo Render proměnných
 
 if (!TMDB_API_KEY) {
-  throw new Error('TMDB_KEY is not defined in environment variables');
+  throw new Error('TMDB_KEY není definován v .env nebo v prostředí');
 }
 
 // Define the addon
@@ -43,13 +44,13 @@ async function getTitleFromTMDB(imdbId) {
     title = response.data.movie_results[0]?.title || response.data.tv_results[0]?.name;
 
     if (!title) {
-      response = await get(
-        get(`https://api.themoviedb.org/3/find/${cleanImdbId}}?api_key=${encodeURIComponent(TMDB_API_KEY)}&external_source=imdb_id&language=en-US`,
+      response = await axios.get(
+        `https://api.themoviedb.org/3/find/${cleanImdbId}?api_key=${encodeURIComponent(TMDB_API_KEY)}&external_source=imdb_id&language=en-US`,
         {
           headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
         }
       );
-      title = response.data[0].movie_results[0]?.title || response.data[0].tv_results[0]?.name;
+      title = response.data.movie_results[0]?.title || response.data.tv_results[0]?.name;
     }
 
     if (!title) {
@@ -57,7 +58,7 @@ async function getTitleFromTMDB(imdbId) {
     }
     console.log(`TMDB dotaz pro ${cleanImdbId}: ${title}`);
     return title;
-  } catch (errorerr) {
+  } catch (err) {
     console.error(`TMDB API chyba pro ${imdbId}: ${err.message}`);
     throw err;
   }
@@ -69,10 +70,10 @@ async function getStreamUrl(videoPageUrl) {
     console.log(`Načítám stránku videa: ${videoPageUrl}`);
     const response = await axios.get(videoPageUrl, {
       headers: {
-        'User-Agent': 'kodi/prehraj.to', // Kopírujeme Kodi přístup
+        'User-Agent': 'kodi/prehraj.to',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;cs;q=0.5',
-        'Referer': 'https://prehraj.to/',
+        'Referer': BASE_URL,
       },
     });
     const $ = cheerio.load(response.data);
@@ -82,7 +83,7 @@ async function getStreamUrl(videoPageUrl) {
 
     // Try to extract stream URL from var sources (Kodi approach)
     const sourcesScript = $('script')
-      .filter((i_, el) => $(el).html().includes('var sources = ['))
+      .filter((i, el) => $(el).html().includes('var sources = ['))
       .html();
     if (sourcesScript) {
       const sourcesMatch = sourcesScript.match(/var sources = \[(.*?)\];/s);
