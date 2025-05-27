@@ -16,7 +16,7 @@ if (!TMDB_API_KEY) {
 // Define the addon
 const builder = new addonBuilder({
   id: 'org.stremio.prehrajto',
-  version: '1.0.6',
+  version: '1.0.7',
   name: 'Přehraj.to',
   description: 'Streamy z prehraj.to',
   resources: ['stream'],
@@ -42,7 +42,7 @@ function normalizeString(str) {
 async function getTitleFromTMDB(imdbId) {
   try {
     const cleanImdbId = imdbId.split(':')[0];
-    if (!cleanImdbId.startsWith('tt') || !/tt\d{7,8}/.test(cleanImdbId)) {
+    if (!cleanImdbId.startsWith('tt') || !/tt\d{7,8}/i.test(cleanImdbId)) {
       throw new Error('Neplatný formát IMDb ID');
     }
 
@@ -297,12 +297,12 @@ builder.defineStreamHandler(async ({ type, id }) => {
       title: item.title,
       url: item.url,
       externalUrl: true,
-      subtitles: item.subtitles},
-    ));
+      subtitles: item.subtitles
+    }));
     console.log(`Vracím ${streams.length} streamů pro ${id}`);
-    return { streams: streams } });
+    return { streams };
   } catch (err) {
-    console.error('Chyba handleru streamů pro ${id}: ${err.message}');
+    console.error(`Chyba handleru streamů pro ${id}: ${err.message}`);
     return { streams: [] };
   }
 });
