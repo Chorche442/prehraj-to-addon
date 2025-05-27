@@ -1,0 +1,12 @@
+{
+  "id": "org.stremio.prehrajto",
+  "version": "1.0.0",
+  "name": "Prehraj.to",
+  "description": "Streams from prehraj.to",
+  "types": ["movie", "series"],
+  "catalogs": [],
+  "resources": ["stream"],
+  "idPrefixes": ["tt"],
+  "logo": "https://stremio.com/website/stremio-logo.png",
+  "behaviorHints": { "adult": false }
+}
