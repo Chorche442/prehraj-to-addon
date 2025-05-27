@@ -1,10 +1,9 @@
 require('dotenv').config();
-const { addonBuilder } = require('stremio-addon-sdk');
+const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
 const axios = require('axios');
 const cheerio = require('cheerio');
-const http = require('http');
 
-// Základní konfigurace
+// Basic configuration
 const BASE_URL = process.env.PREHRAJTO_BASE_URL || 'https://prehraj.to';
 const TMDB_API_KEY = process.env.TMDB_KEY;
 
@@ -12,7 +11,7 @@ if (!TMDB_API_KEY) {
   throw new Error('TMDB_KEY is not defined in .env');
 }
 
-// Definice addon
+// Define the addon
 const builder = new addonBuilder({
   id: 'org.stremio.prehrajto',
   version: '1.0.0',
@@ -26,7 +25,7 @@ const builder = new addonBuilder({
   behaviorHints: { adult: false },
 });
 
-// Funkce pro získání názvu z TMDB podle IMDb ID
+// Function to get title from TMDB using IMDb ID
 async function imdbToQuery(imdbId) {
   try {
     if (!imdbId.startsWith('tt') || !/tt\d{7,8}/.test(imdbId)) {
@@ -50,7 +49,7 @@ async function imdbToQuery(imdbId) {
   }
 }
 
-// Funkce pro vyhledávání na prehraj.to
+// Function to search on prehraj.to
 async function searchPrehrajTo(query) {
   try {
     const url = `${BASE_URL}/hledej/${encodeURIComponent(query)}`;
@@ -85,7 +84,7 @@ async function searchPrehrajTo(query) {
   }
 }
 
-// Stream handler pro Stremio
+// Stream handler for Stremio
 builder.defineStreamHandler(async ({ type, id }) => {
   console.log(`Processing stream request for type: ${type}, id: ${id}`);
   try {
@@ -104,20 +103,25 @@ builder.defineStreamHandler(async ({ type, id }) => {
   }
 });
 
-// Vytvoření HTTP serveru s testovacím endpointem
-const addonInterface = builder.getInterface();
+// Create HTTP server using stremio-addon-sdk's serveHTTP
+const PORT = process.env.PORT || 10000;
+serveHTTP(builder.getInterface(), { port: PORT }, () => {
+  console.log(`Stremio addon running on port ${PORT}`);
+});
 
-const server = http.createServer((req, res) => {
+// Health check endpoint for Render
+const http = require('http');
+const healthServer = http.createServer((req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('OK');
   } else {
-    addonInterface(req, res);
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('Not Found');
   }
 });
 
-// Naslouchání na portu
-const PORT = process.env.PORT || 10000;
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Stremio addon running on port ${PORT}`);
+// Start health server on a different port (optional, only if Render requires a separate health check)
+healthServer.listen(8080, '0.0.0.0', () => {
+  console.log('Health check server running on port 8080');
 });
