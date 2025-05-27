@@ -1,25 +1,18 @@
-require('dotenv').config(); // Na Renderu se ignoruje, pokud používáš Environment Variables
+require('dotenv').config();
 const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
 const axios = require('axios');
 const cheerio = require('cheerio');
-const http = require('http');
-const Hjson = require('hjson');
-const puppeteer = require('puppeteer');
 
-// Configuration
+const PORT = process.env.PORT || 10000;
 const BASE_URL = 'https://prehraj.to';
 const TMDB_API_KEY = process.env.TMDB_KEY;
-const PORT = process.env.PORT || 10000; // Render port
+const CACHE_TTL = 3600000; // 1 hour
 
-if (!TMDB_API_KEY) {
-  console.error('Chyba: TMDB_KEY není definován v Environment Variables na Renderu');
-  process.exit(1);
-}
+const searchCache = new Map();
 
-// Define the addon
 const builder = new addonBuilder({
   id: 'org.stremio.prehrajto',
-  version: '1.0.14',
+  version: '1.0.15',
   name: 'Přehraj.to',
   description: 'Streamy z prehraj.to',
   resources: ['stream'],
@@ -30,7 +23,6 @@ const builder = new addonBuilder({
   behaviorHints: { adult: false },
 });
 
-// Normalize string (mimic Kodi's encode)
 function normalizeString(str) {
   const diacriticsMap = {
     'á': 'a', 'č': 'c', 'ď': 'd', 'é': 'e', 'ě': 'e', 'í': 'i', 'ň': 'n', 'ó': 'o',
@@ -41,36 +33,37 @@ function normalizeString(str) {
   return str.replace(/[áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ]/g, match => diacriticsMap[match] || match);
 }
 
-// Format season and episode
 function formatSeasonEpisode(season, episode) {
   const s = season.toString().padStart(2, '0');
   const e = episode.toString().padStart(2, '0');
-  return [`S${s}E${e}`, `${season}x${episode.toString().padStart(2, '0')}`];
+  return [`S${s}E${e}`, `${s}x${e}`, `Ep. ${e}`, `Episode ${e}`];
 }
 
-// Get title and year from TMDB using IMDb ID
 async function getTitleFromTMDB(imdbId, type, season, episode) {
+  const cacheKey = `tmdb:${imdbId}:${type}:${season || ''}:${episode || ''}`;
+  if (searchCache.has(cacheKey)) {
+    const { data, timestamp } = searchCache.get(cacheKey);
+    if (Date.now() - timestamp < CACHE_TTL) return data;
+  }
   try {
     const cleanImdbId = imdbId.split(':')[0];
     if (!cleanImdbId.startsWith('tt') || !/tt\d{7,8}/i.test(cleanImdbId)) {
       throw new Error('Neplatný formát IMDb ID');
     }
-
-    let title, czechTitle, year;
     let response = await axios.get(
       `https://api.themoviedb.org/3/find/${cleanImdbId}?api_key=${encodeURIComponent(TMDB_API_KEY)}&external_source=imdb_id&language=cs-CZ`,
-      { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36' } }
+      { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/136.0.0.0' } }
     );
     const movieResult = response.data.movie_results[0];
     const tvResult = response.data.tv_results[0];
-    title = movieResult?.title || tvResult?.name;
-    czechTitle = title;
-    year = movieResult?.release_date?.split('-')[0] || tvResult?.first_air_date?.split('-')[0];
+    let title = movieResult?.title || tvResult?.name;
+    let czechTitle = title;
+    let year = movieResult?.release_date?.split('-')[0] || tvResult?.first_air_date?.split('-')[0];
 
     if (!title) {
       response = await axios.get(
         `https://api.themoviedb.org/3/find/${cleanImdbId}?api_key=${encodeURIComponent(TMDB_API_KEY)}&external_source=imdb_id&language=en-US`,
-        { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36' } }
+        { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/136.0.0.0' } }
       );
       const movieResult = response.data.movie_results[0];
       const tvResult = response.data.tv_results[0];
@@ -78,98 +71,25 @@ async function getTitleFromTMDB(imdbId, type, season, episode) {
       year = movieResult?.release_date?.split('-')[0] || tvResult?.first_air_date?.split('-')[0];
     }
 
-    if (!title) {
-      throw new Error(`Nenalezen název pro IMDb ID: ${cleanImdbId}`);
-    }
-
-    console.log(`TMDB dotaz pro ${cleanImdbId}: ${title} (CZ: ${czechTitle}, Year: ${year})`);
-    return { title, czechTitle: czechTitle || title, year, season, episode };
+    if (!title) throw new Error(`Nenalezen název pro IMDb ID: ${cleanImdbId}`);
+    const data = { title, czechTitle: czechTitle || title, year, season, episode };
+    searchCache.set(cacheKey, { data, timestamp: Date.now() });
+    return data;
   } catch (err) {
-    console.error(`TMDB API chyba pro ${imdbId}: ${err.message}`);
+    console.error(`TMDB chyba pro ${imdbId}: ${err.message}`);
     throw err;
   }
 }
 
-// Extract direct stream URL and subtitles from prehraj.to video page
-async function getStreamUrl(videoPageUrl) {
-  try {
-    console.log(`Načítám stránku videa: ${videoPageUrl}`);
-    const response = await axios.get(videoPageUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'cs-CZ,cs;q=0.9,en;q=0.8',
-        'Referer': BASE_URL,
-        'Cookie': 'AC=C; __stripe_mid=964b43e3-f45b-4154-b1c0-4ac04f7d0cdbdaba90; v18259195=1; 50bf9c8a04f0b814d24a3a99cd9f3d1a=1; v18315059=1; d62d6f4bc57139b0f08360335f6b79f6=1; v18259192=1; 2d14ac0cdaec3227c23bc6f136f66e2c=1; v18259209=1; 78743fd632012358cdff0f56b9a1d8af=1'
-      },
-    });
-    const $ = cheerio.load(response.data);
-
-    let streamUrl = null;
-    let subtitles = null;
-
-    const sourcesScript = $('script')
-      .filter((i, el) => $(el).html().includes('var sources = ['))
-      .html();
-    if (sourcesScript) {
-      const sourcesMatch = sourcesScript.match(/var sources = \[(.*?)\];/s);
-      if (sourcesMatch) {
-        const sources = sourcesMatch[1];
-        const fileMatch = sources.match(/file: "(.*?)"/) || sources.match(/src: "(.*?)"/);
-        if (fileMatch) {
-          streamUrl = fileMatch[1];
-          console.log(`Nalezen stream URL: ${streamUrl}`);
-        } else {
-          console.error(`Nenalezen file/src v sources na ${videoPageUrl}`);
-        }
-      } else {
-        console.error(`Nenalezeno pole sources na ${videoPageUrl}`);
-      }
-    }
-
-    if (!streamUrl) {
-      const videoSource = $('video source').attr('src') || $('#video-wrap video').attr('src');
-      if (videoSource) {
-        streamUrl = videoSource.startsWith('http') ? videoSource : `${BASE_URL}${videoSource}`;
-        console.log(`Nalezen stream z video tagu: ${streamUrl}`);
-      }
-    }
-
-    const tracksScript = $('script')
-      .filter((i, el) => $(el).html().includes('var tracks = '))
-      .html();
-    if (tracksScript) {
-      const tracksMatch = tracksScript.match(/var tracks = (.*?);/s);
-      if (tracksMatch) {
-        try {
-          const tracksData = Hjson.parse(tracksMatch[1]);
-          if (tracksData && tracksData[0] && tracksData[0].src) {
-            subtitles = [{ url: tracksData[0].src, lang: 'cs' }];
-            console.log(`Nalezeny titulky: ${tracksData[0].src}`);
-          }
-        } catch (err) {
-          console.error(`Chyba při parsování titulků na ${videoPageUrl}: ${err.message}`);
-        }
-      }
-    }
-
-    if (!streamUrl) {
-      console.error(`Žádný stream URL nenalezen na ${videoPageUrl}`);
-      return null;
-    }
-
-    return { url: streamUrl, subtitles };
-  } catch (err) {
-    console.error(`Chyba při získávání stream URL z ${videoPageUrl}: ${err.message}`);
-    return null;
-  }
-}
-
-// Search on prehraj.to using Puppeteer with fallback to Axios
 async function searchPrehrajTo(query, type, season, episode, year) {
+  const cacheKey = `search:${query}:${type}:${season || ''}:${episode || ''}:${year || ''}`;
+  if (searchCache.has(cacheKey)) {
+    const { results, timestamp } = searchCache.get(cacheKey);
+    if (Date.now() - timestamp < CACHE_TTL) return results;
+  }
+
   try {
     const normalizedQuery = normalizeString(query);
-    console.log(`Normalizovaný dotaz: ${normalizedQuery}`);
     let queries = [];
 
     if (type === 'series' && season && episode) {
@@ -183,12 +103,7 @@ async function searchPrehrajTo(query, type, season, episode, year) {
         normalizedQuery
       ];
     } else {
-      const titleVariants = [
-        query,
-        query.replace('&', 'a'),
-        normalizedQuery,
-        normalizedQuery.replace('&', 'a')
-      ];
+      const titleVariants = [query, query.replace('&', 'a'), normalizedQuery, normalizedQuery.replace('&', 'a')];
       queries = [
         ...titleVariants,
         ...titleVariants.map(t => `${t} ${year || new Date().getFullYear()}`),
@@ -199,152 +114,100 @@ async function searchPrehrajTo(query, type, season, episode, year) {
     }
 
     queries = [...new Set(queries)];
-    console.log(`Testované dotazy: ${queries.join(', ')}`);
-
     const items = [];
     const maxResults = 10;
 
-    // Try Puppeteer first
-    try {
-      const browser = await puppeteer.launch({
-        headless: 'new',
-        executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium-browser',
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--single-process',
-          '--no-zygote'
-        ],
-        userDataDir: '/tmp/puppeteer_cache'
-      });
-
-      for (const q of queries) {
-        let pageNum = 1;
-        while (items.length < maxResults) {
-          const url = `${BASE_URL}/hledej/${encodeURIComponent(q)}?vp-page=${pageNum}`;
-          console.log(`Vyhledávám na prehraj.to s dotazem: ${q}, stránka: ${pageNum}`);
-
-          const page = await browser.newPage();
-          await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36');
-          await page.setExtraHTTPHeaders({
+    for (const q of queries) {
+      const url = `${BASE_URL}/hledej/${encodeURIComponent(q)}`;
+      console.log(`Vyhledávám: ${url}`);
+      try {
+        const response = await axios.get(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/136.0.0.0',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
             'Accept-Language': 'cs-CZ,cs;q=0.9,en;q=0.8',
             'Cookie': 'AC=C; __stripe_mid=964b43e3-f45b-4154-b1c0-4ac04f7d0cdbdaba90'
-          });
+          }
+        });
+        const $ = cheerio.load(response.data);
 
-          try {
-            await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-            const content = await page.content();
-            console.log(`HTML obsah (prvních 500 znaků): ${content.substring(0, 500)}`);
-            const $ = cheerio.load(content);
+        const titles = $('h3.video__title, .video-title, .title');
+        const sizes = $('div.video__tag--size');
+        const times = $('div.video__tag--time');
+        const links = $('a.video--link, a.video-link, a[href*="/video/"]');
 
-            const titles = $('h3.video__title, .video-title, .title');
-            const sizes = $('div.video__tag--size');
-            const times = $('div.video__tag--time');
-            const links = $('a.video--link, a.video-link, a[href*="/video/"]');
-
-            console.log(`Nalezeno ${titles.length} výsledků pro dotaz: ${q}, stránka: ${pageNum}`);
-
-            for (let i = 0; i < titles.length && items.length < maxResults; i++) {
-              const title = $(titles[i]).text().trim();
-              const size = $(sizes[i])?.text().trim() || 'Není známo';
-              const time = $(times[i])?.text().trim() || 'Není známo';
-              const href = $(links[i])?.attr('href');
-
-              if (href) {
-                items.push({
-                  title: `${title} [${size} - ${time}]`,
-                  url: href.startsWith('http') ? href : `${BASE_URL}${href}`,
-                });
-              }
-            }
-
-            await page.close();
-            pageNum++;
-            if (!$('div.pagination-more').length) {
-              console.log(`Žádné další stránky pro dotaz: ${q}`);
-              break;
-            }
-          } catch (err) {
-            console.error(`Chyba při načítání stránky ${url}: ${err.message}`);
-            await page.close();
-            break;
+        for (let i = 0; i < titles.length && items.length < maxResults; i++) {
+          const title = $(titles[i]).text().trim();
+          const size = $(sizes[i])?.text().trim() || 'Není známo';
+          const time = $(times[i])?.text().trim() || 'Není známo';
+          const href = $(links[i])?.attr('href');
+          if (href) {
+            items.push({
+              title: `${title} [${size} - ${time}]`,
+              url: href.startsWith('http') ? href : `${BASE_URL}${href}`
+            });
           }
         }
         if (items.length > 0) break;
-      }
-
-      await browser.close();
-    } catch (puppeteerErr) {
-      console.error(`Puppeteer selhal: ${puppeteerErr.message}, přepínám na Axios`);
-
-      // Fallback to Axios
-      for (const q of queries) {
-        const url = `${BASE_URL}/hledej/${encodeURIComponent(q)}`;
-        console.log(`Vyhledávám s Axios: ${url}`);
-        try {
-          const response = await axios.get(url, {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-              'Accept-Language': 'cs-CZ,cs;q=0.9,en;q=0.8',
-              'Cookie': 'AC=C; __stripe_mid=964b43e3-f45b-4154-b1c0-4ac04f7d0cdbdaba90'
-            }
-          });
-          const $ = cheerio.load(response.data);
-
-          const titles = $('h3.video__title, .video-title, .title');
-          const sizes = $('div.video__tag--size');
-          const times = $('div.video__tag--time');
-          const links = $('a.video--link, a.video-link, a[href*="/video/"]');
-
-          for (let i = 0; i < titles.length && items.length < maxResults; i++) {
-            const title = $(titles[i]).text().trim();
-            const size = $(sizes[i])?.text().trim() || 'Není známo';
-            const time = $(times[i])?.text().trim() || 'Není známo';
-            const href = $(links[i])?.attr('href');
-
-            if (href) {
-              items.push({
-                title: `${title} [${size} - ${time}]`,
-                url: href.startsWith('http') ? href : `${BASE_URL}${href}`,
-              });
-            }
-          }
-          console.log(`Axios nalezl ${items.length} položek pro dotaz: ${q}`);
-          if (items.length > 0) break;
-        } catch (axiosErr) {
-          console.error(`Axios chyba pro dotaz ${q}: ${axiosErr.message}`);
-        }
+      } catch (err) {
+        console.error(`Chyba při vyhledávání ${q}: ${err.message}`);
       }
     }
 
-    console.log(`Celkem nalezeno ${items.length} položek pro dotaz: ${query}`);
-
-    const streamItems = [];
-    for (const item of items) {
-      const streamData = await getStreamUrl(item.url);
-      if (streamData) {
-        streamItems.push({
-          title: item.title,
-          url: streamData.url,
-          subtitles: streamData.subtitles,
-        });
-      }
-    }
-    console.log(`Nalezeno ${streamItems.length} platných streamů pro dotaz: ${query}`);
-    return streamItems;
+    searchCache.set(cacheKey, { results: items, timestamp: Date.now() });
+    return items;
   } catch (err) {
-    console.error(`Chyba vyhledávání pro dotaz: ${query}: ${err.message}`);
+    console.error(`Chyba vyhledávání: ${err.message}`);
     return [];
   }
 }
 
-// Stream handler for Stremio
+async function getStreamUrl(videoPageUrl) {
+  const cacheKey = `stream:${videoPageUrl}`;
+  if (searchCache.has(cacheKey)) {
+    const { data, timestamp } = searchCache.get(cacheKey);
+    if (Date.now() - timestamp < CACHE_TTL) return data;
+  }
+
+  try {
+    const response = await axios.get(videoPageUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/136.0.0.0',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'cs-CZ,cs;q=0.9,en;q=0.8',
+        'Cookie': 'AC=C; __stripe_mid=964b43e3-f45b-4154-b1c0-4ac04f7d0cdbdaba90'
+      }
+    });
+    const $ = cheerio.load(response.data);
+
+    let streamUrl = null;
+    const sourcesScript = $('script').filter((i, el) => $(el).html().includes('var sources = [')).html();
+    if (sourcesScript) {
+      const sourcesMatch = sourcesScript.match(/var sources = \[(.*?)\];/s);
+      if (sourcesMatch) {
+        const fileMatch = sourcesMatch[1].match(/file: "(.*?)"/) || sourcesMatch[1].match(/src: "(.*?)"/);
+        if (fileMatch) streamUrl = fileMatch[1];
+      }
+    }
+
+    if (!streamUrl) {
+      const videoSource = $('video source').attr('src') || $('#video-wrap video').attr('src');
+      if (videoSource) {
+        streamUrl = videoSource.startsWith('http') ? videoSource : `${BASE_URL}${videoSource}`;
+      }
+    }
+
+    const data = streamUrl ? { url: streamUrl, subtitles: null } : null;
+    searchCache.set(cacheKey, { data, timestamp: Date.now() });
+    return data;
+  } catch (err) {
+    console.error(`Chyba při získávání streamu ${videoPageUrl}: ${err.message}`);
+    return null;
+  }
+}
+
 builder.defineStreamHandler(async ({ type, id }) => {
-  console.log(`Zpracovávám požadavek pro typ: ${type}, id: ${id}`);
+  console.log(`Zpracovávám: ${type}, ${id}`);
   try {
     let season, episode;
     let cleanId = id;
@@ -359,37 +222,26 @@ builder.defineStreamHandler(async ({ type, id }) => {
     const { title, czechTitle, year } = await getTitleFromTMDB(cleanId, type, season, episode);
     const query = type === 'series' ? czechTitle : title;
     const results = await searchPrehrajTo(query, type, season, episode, year);
-    const streams = results.map((item) => ({
-      title: item.title,
-      url: item.url,
-      externalUrl: true,
-      subtitles: item.subtitles
-    }));
-    console.log(`Vracím ${streams.length} streamů pro ${id}`);
+    const streams = [];
+
+    for (const item of results) {
+      const streamData = await getStreamUrl(item.url);
+      if (streamData) {
+        streams.push({
+          title: item.title,
+          url: streamData.url,
+          externalUrl: true,
+          subtitles: streamData.subtitles
+        });
+      }
+    }
     return { streams };
   } catch (err) {
-    console.error(`Chyba handleru streamů pro ${id}: ${err.message}`);
+    console.error(`Chyba handleru: ${err.message}`);
     return { streams: [] };
   }
 });
 
-// Create HTTP server
-console.log(`Spouštím server na portu ${PORT}`);
 serveHTTP(builder.getInterface(), { port: PORT }, () => {
-  console.log(`HTTP addon dostupný na: http://0.0.0.0:${PORT}/manifest.json`);
-});
-
-// Health check endpoint
-const healthServer = http.createServer((req, res) => {
-  if (req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('OK');
-  } else {
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('Not Found');
-  }
-});
-
-healthServer.listen(8080, () => {
-  console.log('Health check server běží na portu 8080');
+  console.log(`Addon běží na http://0.0.0.0:${PORT}/manifest.json`);
 });
