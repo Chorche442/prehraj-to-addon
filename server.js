@@ -6,7 +6,7 @@ const http = require('http');
 
 // Configuration
 const BASE_URL = 'https://prehraj.to';
-const TMDB_API_KEY = process.env.TMDB_KEY; // Načítá z .env nebo Render proměnných
+const TMDB_API_KEY = process.env.TMDB_KEY;
 
 if (!TMDB_API_KEY) {
   throw new Error('TMDB_KEY není definován v .env nebo v prostředí');
@@ -15,7 +15,7 @@ if (!TMDB_API_KEY) {
 // Define the addon
 const builder = new addonBuilder({
   id: 'org.stremio.prehrajto',
-  version: '1.0.3',
+  version: '1.0.4',
   name: 'Přehraj.to',
   description: 'Streamy z prehraj.to',
   resources: ['stream'],
@@ -25,6 +25,18 @@ const builder = new addonBuilder({
   logo: 'https://stremio.com/website/stremio-logo.png',
   behaviorHints: { adult: false },
 });
+
+// Function to normalize string (mimic Kodi's encode)
+function normalizeString(str) {
+  // Simple diacritics removal for Czech characters
+  const diacriticsMap = {
+    'á': 'a', 'č': 'c', 'ď': 'd', 'é': 'e', 'ě': 'e', 'í': 'i', 'í: 'y', 'ň': 'n', 'ý': 'y',
+    'ó': 'o', 'ř': 'r', 'š': 's', 'ť': 't', 'ú': 'u', 'ů': 'u', 'ý': 'y', 'ž': 'z',
+    'Á': 'A', 'Č': 'C', 'Ď': 'D', 'É': 'E', 'Ě': 'E', 'Í': 'I', 'Ň': 'N', 'Ó': 'O',
+    'Ř': 'R', 'Š': 'S', 'Ť': 'T', 'Ú': 'U', 'Ů': 'U', 'Ý': 'Y', 'Ž': 'Z'
+  };
+  return str.replace(/[áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ]/g, match => diacriticsMap[match] || match);
+}
 
 // Function to get title from TMDB using IMDb ID
 async function getTitleFromTMDB(imdbId) {
@@ -68,6 +80,7 @@ async function getTitleFromTMDB(imdbId) {
 async function getStreamUrl(videoPageUrl) {
   try {
     console.log(`Načítám stránku videa: ${videoPageUrl}`);
+    await new Promise(resolve => setTimeout(resolve, 1000)); // Prevent rate limiting
     const response = await axios.get(videoPageUrl, {
       headers: {
         'User-Agent': 'kodi/prehraj.to',
@@ -121,6 +134,7 @@ async function getStreamUrl(videoPageUrl) {
 
         for (const playerUrl of playerLinks) {
           console.log(`Zkouším player URL: ${playerUrl}`);
+          await new Promise(resolve => setTimeout(resolve, 1000)); // Prevent rate limiting
           const playerResponse = await axios.get(playerUrl, {
             headers: {
               'User-Agent': 'kodi/prehraj.to',
@@ -180,52 +194,72 @@ async function getStreamUrl(videoPageUrl) {
   }
 }
 
-// Function to search on prehraj.to
+// Function to search on prehraj.to (mimic Kodi's search)
 async function searchPrehrajTo(query) {
   try {
-    let page = 1;
-    const maxResults = 10; // Omezení pro efektivitu
+    // Normalize query like Kodi
+    const normalizedQuery = normalizeString(query);
+    console.log(`Normalizovaný dotaz: ${normalizedQuery}`);
+    // Try multiple query variations
+    const queries = [
+      normalizedQuery,
+      `${normalizedQuery} ${new Date().getFullYear()}`,
+      `${normalizedQuery} 4K`,
+      query // Original query as fallback
+    ];
+
     const items = [];
+    const maxResults = 10; // Kodi-like limit
 
-    while (items.length < maxResults) {
-      const url = `${BASE_URL}/hledej/${encodeURIComponent(query)}?vp-page=${page}`;
-      console.log(`Vyhledávám na prehraj.to s dotazem: ${query}, stránka: ${page}`);
-      const response = await axios.get(url, {
-        headers: {
-          'User-Agent': 'kodi/prehraj.to',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;cs;q=0.5',
-          'Referer': BASE_URL,
-        },
-      });
-      const $ = cheerio.load(response.data);
-      console.log(`Délka HTML odpovědi: ${response.data.length}`);
+    for (const q of queries) {
+      let page = 1;
+      while (items.length < maxResults) {
+        const url = `${BASE_URL}/hledej/${encodeURIComponent(q)}?vp-page=${page}`;
+        console.log(`Vyhledávám na prehraj.to s dotazem: ${q}, stránka: ${page}`);
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Prevent rate limiting
+        const response = await axios.get(url, {
+          headers: {
+            'User-Agent': 'kodi/prehraj.to',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;cs;q=0.5',
+            'Referer': BASE_URL,
+          },
+        });
+        const $ = cheerio.load(response.data);
+        console.log(`Délka HTML odpovědi: ${response.data.length}`);
 
-      const videos = $('.video-list .video');
-      if (!videos.length) {
-        console.log(`Žádné další výsledky pro dotaz: ${query}`);
-        break;
-      }
+        // Use Kodi-like selectors
+        const titles = $('h3.video__title');
+        const sizes = $('div.video__tag--size');
+        const times = $('div.video__tag--time');
+        const links = $('a.video--link');
 
-      videos.each((i, el) => {
-        const title = $(el).find('.info .title').text().trim();
-        const href = $(el).find('a').attr('href');
-        const size = $(el).find('.info .video__tag--size').text().trim() || 'Není známo';
-        const time = $(el).find('.info .video__tag--time').text().trim() || 'Není známo';
-
-        if (href && items.length < maxResults) {
-          items.push({
-            title: `${title} [${size} - ${time}]`,
-            url: href.startsWith('http') ? href : `${BASE_URL}${href}`,
-          });
+        if (titles.length === 0) {
+          console.log(`Žádné výsledky pro dotaz: ${q}, stránka: ${page}`);
+          break;
         }
-      });
 
-      page++;
-      if (!$('div.pagination-more').length) {
-        console.log('Žádné další stránky k načtení');
-        break;
+        for (let i = 0; i < titles.length && items.length < maxResults; i++) {
+          const title = $(titles[i]).text().trim();
+          const size = $(sizes[i]).text().trim() || 'Není známo';
+          const time = $(times[i]).text().trim() || 'Není známo';
+          const href = $(links[i]).attr('href');
+
+          if (href) {
+            items.push({
+              title: `${title} [${size} - ${time}]`,
+              url: href.startsWith('http') ? href : `${BASE_URL}${href}`,
+            });
+          }
+        }
+
+        page++;
+        if (!$('div.pagination-more').length) {
+          console.log(`Žádné další stránky pro dotaz: ${q}`);
+          break;
+        }
       }
+      if (items.length > 0) break; // Stop if we found results
     }
 
     console.log(`Nalezeno ${items.length} položek pro dotaz: ${query}`);
