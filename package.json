@@ -1,7 +1,6 @@
 {
-  "name": "stremio-prehrajto",
-  "version": "1.0.12",
-  "description": "Stremio addon for Prehraj.to",
+  "name": "prehraj-to-addon",
+  "version": "1.0.14",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -9,12 +8,9 @@
   "dependencies": {
     "axios": "^1.7.2",
     "cheerio": "^1.0.0-rc.12",
-    "dotenv": "^16.4.5",
     "hjson": "^3.2.2",
-    "puppeteer": "^22.12.1",
-    "stremio-addon-sdk": "^1.6.10"
-  },
-  "engines": {
-    "node": "24.x"
+    "puppeteer": "^23.0.0",
+    "stremio-addon-sdk": "^1.6.8",
+    "dotenv": "^16.4.5"
   }
 }
