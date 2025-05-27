@@ -10,13 +10,13 @@ const TMDB_API_KEY = process.env.TMDB_KEY;
 
 if (!TMDB_API_KEY) {
   console.error('Chyba: TMDB_KEY není definován v .env nebo v prostředí');
-  process.exit(1); // Exit to prevent hanging
+  process.exit(1);
 }
 
 // Define the addon
 const builder = new addonBuilder({
   id: 'org.stremio.prehrajto',
-  version: '1.0.5',
+  version: '1.0.6',
   name: 'Přehraj.to',
   description: 'Streamy z prehraj.to',
   resources: ['stream'],
@@ -80,7 +80,7 @@ async function getTitleFromTMDB(imdbId) {
 async function getStreamUrl(videoPageUrl) {
   try {
     console.log(`Načítám stránku videa: ${videoPageUrl}`);
-    await new Promise(resolve => setTimeout(resolve, 1000)); // Prevent rate limiting
+    await new Promise(resolve => setTimeout(resolve, 1000));
     const response = await axios.get(videoPageUrl, {
       headers: {
         'User-Agent': 'kodi/prehraj.to',
@@ -225,7 +225,7 @@ async function searchPrehrajTo(query) {
         const $ = cheerio.load(response.data);
         console.log(`Délka HTML odpovědi: ${response.data.length}`);
 
-        // Debug: Save HTML for analysis
+        // Debug HTML
         if (process.env.DEBUG_HTML) {
           require('fs').writeFileSync(`debug_${q}_${page}.html`, response.data);
           console.log(`HTML uloženo do debug_${q}_${page}.html`);
@@ -236,16 +236,18 @@ async function searchPrehrajTo(query) {
         const times = $('div.video__tag--time');
         const links = $('a.video--link');
 
-        if (titles.length === 0) {
+        if (titles.length) {
+          console.log(`Nalezeno ${titles.length} výsledků pro dotaz: ${q}, stránka: ${page}`);
+        } else {
           console.log(`Žádné výsledky pro dotaz: ${q}, stránka: ${page}`);
           break;
         }
 
         for (let i = 0; i < titles.length && items.length < maxResults; i++) {
           const title = $(titles[i]).text().trim();
-          const size = $(sizes[i]).text().trim() || 'Není známo';
-          const time = $(times[i]).text().trim() || 'Není známo';
-          const href = $(links[i]).attr('href');
+          const size = $(sizes[i])?.text().trim() || 'Není známo';
+          const time = $(times[i])?.text().trim() || 'Není známo';
+          const href = $(links[i])?.attr('href');
 
           if (href) {
             items.push({
@@ -264,7 +266,7 @@ async function searchPrehrajTo(query) {
       if (items.length > 0) break;
     }
 
-    console.log(`Nalezeno ${items.length} položek pro dotaz: ${query}`);
+    console.log(`Celkem nalezeno ${items.length} položek pro dotaz: ${query}`);
 
     const streamItems = [];
     for (const item of items) {
@@ -277,17 +279,17 @@ async function searchPrehrajTo(query) {
         });
       }
     }
-    console.log(`Nalezeno ${streamItems.length} platných stream URL pro dotaz: ${query}`);
+    console.log(`Nalezeno ${streamItems.length} platných streamů pro dotaz: ${query}`);
     return streamItems;
   } catch (err) {
-    console.error(`Chyba vyhledávání pro dotaz ${query}: ${err.message}`);
+    console.error(`Chyba vyhledávání pro dotaz: ${query}: ${err.message}`);
     return [];
   }
 }
 
 // Stream handler for Stremio
 builder.defineStreamHandler(async ({ type, id }) => {
-  console.log(`Zpracovávám požadavek na stream pro typ: ${type}, id: ${id}`);
+  console.log(`Zpracovávám požadavek pro typ: ${type}, id: ${id}`);
   try {
     const query = await getTitleFromTMDB(id);
     const results = await searchPrehrajTo(query);
@@ -295,18 +297,18 @@ builder.defineStreamHandler(async ({ type, id }) => {
       title: item.title,
       url: item.url,
       externalUrl: true,
-      subtitles: item.subtitles,
+      subtitles: item.subtitles},
     }));
     console.log(`Vracím ${streams.length} streamů pro ${id}`);
-    return { streams };
+    return { streams: streams } });
   } catch (err) {
-    console.error(`Chyba handleru streamů pro ${id}: ${err.message}`);
+    console.error('Chyba handleru streamů pro ${id}: ${err.message}');
     return { streams: [] };
   }
 });
 
 // Create HTTP server using stremio-addon-sdk's serveHTTP
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 8000;
 console.log(`Spouštím server na portu ${PORT}`);
 serveHTTP(builder.getInterface(), { port: PORT }, () => {
   console.log(`HTTP addon dostupný na: http://0.0.0.0:${PORT}/manifest.json`);
@@ -323,6 +325,6 @@ const healthServer = http.createServer((req, res) => {
   }
 });
 
-healthServer.listen(8080, '0.0.0.0', () => {
+healthServer.listen(8080, () => {
   console.log('Health check server běží na portu 8080');
 });
