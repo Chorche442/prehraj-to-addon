@@ -1,6 +1,6 @@
 {
   "name": "stremio-prehrajto",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Stremio addon for Prehraj.to",
   "main": "server.js",
   "scripts": {
