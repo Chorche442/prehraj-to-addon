@@ -12,7 +12,7 @@ const builder = new addonBuilder({
   resources: ["stream"],
   types: ["movie", "series"],
   idPrefixes: ["tt"],
-  catalogs: [], // důležité – musí být platné pole
+  catalogs: [] // důležité – musí být pole, i když prázdné
 });
 
 function imdbToQuery(imdbId) {
@@ -64,12 +64,10 @@ builder.defineStreamHandler(async ({ type, id }) => {
   }
 });
 
-const addonInterface = builder.getInterface();
-
+// 🔧 HTTP server pro Render (poslouchá na správném portu)
 http
-  .createServer((req, res) => {
-    addonInterface(req, res);
-  })
+  .createServer(builder.getInterface())
   .listen(process.env.PORT || 7000, "0.0.0.0");
 
 console.log("Stremio addon running on port " + (process.env.PORT || 7000));
+
