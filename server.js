@@ -298,7 +298,7 @@ builder.defineStreamHandler(async ({ type, id }) => {
       url: item.url,
       externalUrl: true,
       subtitles: item.subtitles},
-    }));
+    ));
     console.log(`Vracím ${streams.length} streamů pro ${id}`);
     return { streams: streams } });
   } catch (err) {
