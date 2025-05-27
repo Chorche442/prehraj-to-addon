@@ -64,11 +64,11 @@ builder.defineStreamHandler(async ({ type, id }) => {
   }
 });
 
-// 🟢 OPRAVENÝ HTTP SERVER PRO RENDER
-const iface = builder.getInterface();
+// ✅ FUNKČNÍ HTTP SERVER
+const addonInterface = builder.getInterface();
 
 http
-  .createServer(iface.getInterface())
+  .createServer(addonInterface)
   .listen(process.env.PORT || 7000, "0.0.0.0");
 
 console.log("Stremio addon running on port " + (process.env.PORT || 7000));
