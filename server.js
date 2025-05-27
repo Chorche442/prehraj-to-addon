@@ -1,25 +1,22 @@
-require('dotenv').config();
 const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const http = require('http');
 
-// Basic configuration
-const BASE_URL = process.env.PREHRAJTO_BASE_URL || 'https://prehraj.to';
-const TMDB_API_KEY = process.env.TMDB_KEY;
-const PREHRAJTO_EMAIL = process.env.PREHRAJTO_EMAIL;
-const PREHRAJTO_PASSWORD = process.env.PREHRAJTO_PASSWORD;
+// Configuration
+const BASE_URL = 'https://prehraj.to';
+const TMDB_API_KEY = process.env.TMDB_KEY'; // Očekává se v Renderu jako proměnná prostředí
 
 if (!TMDB_API_KEY) {
-  throw new Error('TMDB_KEY is not defined in .env');
+  throw new Error('TMDB_KEY is not defined in environment variables');
 }
 
 // Define the addon
 const builder = new addonBuilder({
   id: 'org.stremio.prehrajto',
-  version: '1.0.2',
-  name: 'Prehraj.to',
-  description: 'Streams from prehraj.to',
+  version: '1.0.3',
+  name: 'Přehraj.to',
+  description: 'Streamy z prehraj.to',
   resources: ['stream'],
   types: ['movie', 'series'],
   idPrefixes: ['tt'],
@@ -28,50 +25,17 @@ const builder = new addonBuilder({
   behaviorHints: { adult: false },
 });
 
-// Function to get premium account cookies
-async function getPremiumCookies() {
-  if (!PREHRAJTO_EMAIL || !PREHRAJTO_PASSWORD) {
-    console.log('No premium credentials provided, using non-premium mode');
-    return { premium: false, cookies: null };
-  }
-
-  try {
-    const loginData = {
-      email: PREHRAJTO_EMAIL,
-      password: PREHRAJTO_PASSWORD,
-      _submit: 'Přihlásit se',
-      remember: 'on',
-      _do: 'login-loginForm-submit',
-    };
-    const response = await axios.post(BASE_URL, loginData, {
-      headers: {
-        'User-Agent': 'kodi/prehraj.to', // Mimic Kodi addon
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-      },
-    });
-    const $ = cheerio.load(response.data);
-    const premiumIndicator = $('ul.header__links span.color-green').text();
-    const premium = premiumIndicator ? true : false;
-    console.log(`Premium account status: ${premium ? 'Active' : 'Inactive'}`);
-    return { premium, cookies: response.headers['set-cookie'] };
-  } catch (err) {
-    console.error('Premium login error:', err.message);
-    return { premium: false, cookies: null };
-  }
-}
-
 // Function to get title from TMDB using IMDb ID
-async function imdbToQuery(imdbId) {
+async function getTitleFromTMDB(imdbId) {
   try {
     const cleanImdbId = imdbId.split(':')[0];
     if (!cleanImdbId.startsWith('tt') || !/tt\d{7,8}/.test(cleanImdbId)) {
-      throw new Error('Invalid IMDb ID format');
+      throw new Error('Neplatný formát IMDb ID');
     }
 
     let title;
     let response = await axios.get(
-      `https://api.themoviedb.org/3/find/${cleanImdbId}?api_key=${TMDB_API_KEY}&external_source=imdb_id&language=cs-CZ`,
+      `https://api.themoviedb.org/3/find/${cleanImdbId}?api_key=${encodeURIComponent(TMDB_API_KEY)}&external_source=imdb_id&language=cs-CZ`,
       {
         headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
       }
@@ -79,48 +43,46 @@ async function imdbToQuery(imdbId) {
     title = response.data.movie_results[0]?.title || response.data.tv_results[0]?.name;
 
     if (!title) {
-      response = await axios.get(
-        `https://api.themoviedb.org/3/find/${cleanImdbId}?api_key=${TMDB_API_KEY}&external_source=imdb_id&language=en-US`,
+      response = await get(
+        get(`https://api.themoviedb.org/3/find/${cleanImdbId}}?api_key=${encodeURIComponent(TMDB_API_KEY)}&external_source=imdb_id&language=en-US`,
         {
           headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
         }
       );
-      title = response.data.movie_results[0]?.title || response.data.tv_results[0]?.name;
+      title = response.data[0].movie_results[0]?.title || response.data[0].tv_results[0]?.name;
     }
 
     if (!title) {
-      throw new Error(`No title found for IMDb ID: ${cleanImdbId}`);
+      throw new Error(`Nenalezen název pro IMDb ID: ${cleanImdbId}`);
     }
-    console.log(`TMDB query for ${cleanImdbId}: ${title}`);
+    console.log(`TMDB dotaz pro ${cleanImdbId}: ${title}`);
     return title;
-  } catch (err) {
-    console.error(`TMDB API error for ${imdbId}:`, err.message);
+  } catch (errorerr) {
+    console.error(`TMDB API chyba pro ${imdbId}: ${err.message}`);
     throw err;
   }
 }
 
 // Function to extract direct stream URL and subtitles from prehraj.to video page
-async function getStreamUrl(videoPageUrl, premium, cookies) {
+async function getStreamUrl(videoPageUrl) {
   try {
-    console.log(`Fetching video page: ${videoPageUrl}`);
-    const headers = {
-      'User-Agent': 'kodi/prehraj.to', // Mimic Kodi addon
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.5',
-      'Referer': BASE_URL,
-    };
+    console.log(`Načítám stránku videa: ${videoPageUrl}`);
     const response = await axios.get(videoPageUrl, {
-      headers,
-      headers: cookies ? { ...headers, Cookie: cookies.join('; ') } : headers,
+      headers: {
+        'User-Agent': 'kodi/prehraj.to', // Kopírujeme Kodi přístup
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;cs;q=0.5',
+        'Referer': 'https://prehraj.to/',
+      },
     });
     const $ = cheerio.load(response.data);
 
     let streamUrl = null;
     let subtitles = null;
 
-    // Try to extract stream URL from var sources
+    // Try to extract stream URL from var sources (Kodi approach)
     const sourcesScript = $('script')
-      .filter((i, el) => $(el).html().includes('var sources = ['))
+      .filter((i_, el) => $(el).html().includes('var sources = ['))
       .html();
     if (sourcesScript) {
       const sourcesMatch = sourcesScript.match(/var sources = \[(.*?)\];/s);
@@ -129,25 +91,64 @@ async function getStreamUrl(videoPageUrl, premium, cookies) {
         const fileMatch = sources.match(/file: "(.*?)"/) || sources.match(/src: "(.*?)"/);
         if (fileMatch) {
           streamUrl = fileMatch[1];
-          console.log(`Extracted stream URL: ${streamUrl}`);
+          console.log(`Nalezen stream URL: ${streamUrl}`);
+        } else {
+          console.error(`Nenalezen file/src v sources na ${videoPageUrl}`);
+        }
+      } else {
+        console.error(`Nenalezeno pole sources na ${videoPageUrl}`);
+      }
+    } else {
+      console.error(`Nenalezen script s var sources na ${videoPageUrl}`);
+    }
+
+    // Fallback: Check for video tags or player links
+    if (!streamUrl) {
+      const videoSource = $('video source').attr('src') || $('#video-wrap video').attr('src');
+      if (videoSource) {
+        streamUrl = videoSource.startsWith('http') ? videoSource : `${BASE_URL}${videoSource}`;
+        console.log(`Nalezen stream z video tagu: ${streamUrl}`);
+      } else {
+        // Try player links (e.g., ?player=videojs-nuevo)
+        const playerLinks = [];
+        $('div.tabs__control-players a').each((i, el) => {
+          const href = $(el).attr('href');
+          if (href) {
+            playerLinks.push(href.startsWith('http') ? href : `${BASE_URL}${href}`);
+          }
+        });
+
+        for (const playerUrl of playerLinks) {
+          console.log(`Zkouším player URL: ${playerUrl}`);
+          const playerResponse = await axios.get(playerUrl, {
+            headers: {
+              'User-Agent': 'kodi/prehraj.to',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+              'Accept-Language': 'en-US,en;cs;q=0.5',
+              'Referer': videoPageUrl,
+            },
+          });
+          const player$ = cheerio.load(playerResponse.data);
+          const playerScript = player$('script')
+            .filter((i, el) => $(el).html().includes('var sources = ['))
+            .html();
+          if (playerScript) {
+            const sourcesMatch = playerScript.match(/var sources = \[(.*?)\];/s);
+            if (sourcesMatch) {
+              const sources = sourcesMatch[1];
+              const fileMatch = sources.match(/file: "(.*?)"/) || sources.match(/src: "(.*?)"/);
+              if (fileMatch) {
+                streamUrl = fileMatch[1];
+                console.log(`Nalezen stream URL z player stránky: ${streamUrl}`);
+                break;
+              }
+            }
+          }
         }
       }
     }
 
-    // For premium users, try ?do=download
-    if (premium && !streamUrl && cookies) {
-      const downloadResponse = await axios.get(`${videoPageUrl}?do=download`, {
-        headers: { ...headers, Cookie: cookies.join('; ') },
-        maxRedirects: 0,
-        validateStatus: (status) => status >= 200 && status < 400,
-      });
-      if (downloadResponse.headers['location']) {
-        streamUrl = downloadResponse.headers['location'];
-        console.log(`Extracted premium stream URL from ?do=download: ${streamUrl}`);
-      }
-    }
-
-    // Extract subtitles from var tracks
+    // Extract subtitles from var tracks (Kodi approach)
     const tracksScript = $('script')
       .filter((i, el) => $(el).html().includes('var tracks = '))
       .html();
@@ -158,59 +159,58 @@ async function getStreamUrl(videoPageUrl, premium, cookies) {
           const tracksData = JSON.parse(tracksMatch[1]);
           if (tracksData && tracksData[0] && tracksData[0].src) {
             subtitles = [{ url: tracksData[0].src, lang: 'cs' }];
-            console.log(`Extracted subtitles: ${tracksData[0].src}`);
+            console.log(`Nalezeny titulky: ${tracksData[0].src}`);
           }
         } catch (err) {
-          console.error(`Error parsing tracks on ${videoPageUrl}:`, err.message);
+          console.error(`Chyba při parsování titulků na ${videoPageUrl}: ${err.message}`);
         }
       }
     }
 
     if (!streamUrl) {
-      console.error(`No stream URL found on ${videoPageUrl}`);
+      console.error(`Žádný stream URL nenalezen na ${videoPageUrl}`);
       return null;
     }
 
     return { url: streamUrl, subtitles };
   } catch (err) {
-    console.error(`Error fetching stream URL from ${videoPageUrl}:`, err.message);
+    console.error(`Chyba při získávání stream URL z ${videoPageUrl}: ${err.message}`);
     return null;
   }
 }
 
 // Function to search on prehraj.to
-async function searchPrehrajTo(query, premium, cookies) {
+async function searchPrehrajTo(query) {
   try {
     let page = 1;
-    const maxResults = 10; // Limit to avoid excessive requests
+    const maxResults = 10; // Omezení pro efektivitu
     const items = [];
 
     while (items.length < maxResults) {
       const url = `${BASE_URL}/hledej/${encodeURIComponent(query)}?vp-page=${page}`;
-      console.log(`Searching prehraj.to with query: ${query}, page: ${page}`);
-      const headers = {
-        'User-Agent': 'kodi/prehraj.to',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Referer': BASE_URL,
-      };
+      console.log(`Vyhledávám na prehraj.to s dotazem: ${query}, stránka: ${page}`);
       const response = await axios.get(url, {
-        headers: cookies ? { ...headers, Cookie: cookies.join('; ') } : headers,
+        headers: {
+          'User-Agent': 'kodi/prehraj.to',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;cs;q=0.5',
+          'Referer': BASE_URL,
+        },
       });
       const $ = cheerio.load(response.data);
-      console.log(`HTML response length: ${response.data.length}`);
+      console.log(`Délka HTML odpovědi: ${response.data.length}`);
 
       const videos = $('.video-list .video');
       if (!videos.length) {
-        console.log(`No more results found for query: ${query}`);
+        console.log(`Žádné další výsledky pro dotaz: ${query}`);
         break;
       }
 
       videos.each((i, el) => {
         const title = $(el).find('.info .title').text().trim();
         const href = $(el).find('a').attr('href');
-        const size = $(el).find('.info .video__tag--size').text().trim() || 'Unknown';
-        const time = $(el).find('.info .video__tag--time').text().trim() || 'Unknown';
+        const size = $(el).find('.info .video__tag--size').text().trim() || 'Není známo';
+        const time = $(el).find('.info .video__tag--time').text().trim() || 'Není známo';
 
         if (href && items.length < maxResults) {
           items.push({
@@ -222,17 +222,17 @@ async function searchPrehrajTo(query, premium, cookies) {
 
       page++;
       if (!$('div.pagination-more').length) {
-        console.log('No more pages to fetch');
+        console.log('Žádné další stránky k načtení');
         break;
       }
     }
 
-    console.log(`Found ${items.length} items for query: ${query}`);
+    console.log(`Nalezeno ${items.length} položek pro dotaz: ${query}`);
 
     // Fetch direct stream URLs and subtitles for each item
     const streamItems = [];
     for (const item of items) {
-      const streamData = await getStreamUrl(item.url, premium, cookies);
+      const streamData = await getStreamUrl(item.url);
       if (streamData) {
         streamItems.push({
           title: item.title,
@@ -241,31 +241,30 @@ async function searchPrehrajTo(query, premium, cookies) {
         });
       }
     }
-    console.log(`Found ${streamItems.length} valid stream URLs for query: ${query}`);
+    console.log(`Nalezeno ${streamItems.length} platných stream URL pro dotaz: ${query}`);
     return streamItems;
   } catch (err) {
-    console.error(`Search error for query ${query}:`, err.message);
+    console.error(`Chyba vyhledávání pro dotaz ${query}: ${err.message}`);
     return [];
   }
 }
 
 // Stream handler for Stremio
 builder.defineStreamHandler(async ({ type, id }) => {
-  console.log(`Processing stream request for type: ${type}, id: ${id}`);
+  console.log(`Zpracovávám požadavek na stream pro typ: ${type}, id: ${id}`);
   try {
-    const { premium, cookies } = await getPremiumCookies();
-    const query = await imdbToQuery(id);
-    const results = await searchPrehrajTo(query, premium, cookies);
+    const query = await getTitleFromTMDB(id);
+    const results = await searchPrehrajTo(query);
     const streams = results.map((item) => ({
       title: item.title,
       url: item.url,
       externalUrl: true,
       subtitles: item.subtitles,
     }));
-    console.log(`Returning ${streams.length} streams for ${id}`);
+    console.log(`Vracím ${streams.length} streamů pro ${id}`);
     return { streams };
   } catch (err) {
-    console.error(`Stream handler error for ${id}:`, err.message);
+    console.error(`Chyba handleru streamů pro ${id}: ${err.message}`);
     return { streams: [] };
   }
 });
@@ -273,7 +272,7 @@ builder.defineStreamHandler(async ({ type, id }) => {
 // Create HTTP server using stremio-addon-sdk's serveHTTP
 const PORT = process.env.PORT || 10000;
 serveHTTP(builder.getInterface(), { port: PORT }, () => {
-  console.log(`HTTP addon accessible at: http://0.0.0.0:${PORT}/manifest.json`);
+  console.log(`HTTP addon dostupný na: http://0.0.0.0:${PORT}/manifest.json`);
 });
 
 // Health check endpoint for Render
@@ -288,5 +287,5 @@ const healthServer = http.createServer((req, res) => {
 });
 
 healthServer.listen(8080, '0.0.0.0', () => {
-  console.log('Health check server running on port 8080');
+  console.log('Health check server běží na portu 8080');
 });
