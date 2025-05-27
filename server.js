@@ -2,6 +2,7 @@ require('dotenv').config();
 const { addonBuilder } = require("stremio-addon-sdk");
 const axios = require("axios");
 const cheerio = require("cheerio");
+const http = require("http");
 
 const builder = new addonBuilder({
   id: "org.stremio.prehrajto",
@@ -11,7 +12,7 @@ const builder = new addonBuilder({
   resources: ["stream"],
   types: ["movie", "series"],
   idPrefixes: ["tt"],
-  catalogs: [],
+  catalogs: [], // důležité – musí být platné pole
 });
 
 function imdbToQuery(imdbId) {
@@ -63,4 +64,12 @@ builder.defineStreamHandler(async ({ type, id }) => {
   }
 });
 
-module.exports = builder.getInterface();
+const addonInterface = builder.getInterface();
+
+http
+  .createServer((req, res) => {
+    addonInterface(req, res);
+  })
+  .listen(process.env.PORT || 7000, "0.0.0.0");
+
+console.log("Stremio addon running on port " + (process.env.PORT || 7000));
