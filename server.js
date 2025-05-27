@@ -4,6 +4,7 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const http = require('http');
 const Hjson = require('hjson');
+const puppeteer = require('puppeteer');
 
 // Configuration
 const BASE_URL = 'https://prehraj.to';
@@ -17,7 +18,7 @@ if (!TMDB_API_KEY) {
 // Define the addon
 const builder = new addonBuilder({
   id: 'org.stremio.prehrajto',
-  version: '1.0.11',
+  version: '1.0.12',
   name: 'Přehraj.to',
   description: 'Streamy z prehraj.to',
   resources: ['stream'],
@@ -170,7 +171,7 @@ async function getStreamUrl(videoPageUrl) {
   }
 }
 
-// Function to search on prehraj.to with HTML logging
+// Function to search on prehraj.to using puppeteer
 async function searchPrehrajTo(query, type, season, episode, year) {
   try {
     const normalizedQuery = normalizeString(query);
@@ -180,17 +181,17 @@ async function searchPrehrajTo(query, type, season, episode, year) {
     if (type === 'series' && season && episode) {
       const episodeFormats = formatSeasonEpisode(season, episode);
       queries = [
-        ...episodeFormats.map(fmt => `${query} ${fmt}`), // Poslední z nás S02E01
-        ...episodeFormats.map(fmt => `${normalizedQuery} ${fmt}`), // Posledni z nas S02E01
-        ...episodeFormats.map(fmt => `${query} ${fmt} CZ`), // Poslední z nás S02E01 CZ
-        ...episodeFormats.map(fmt => `${normalizedQuery} ${fmt} CZ`), // Posledni z nas S02E01 CZ
-        query, // Poslední z nás
-        normalizedQuery // Posledni z nas
+        ...episodeFormats.map(fmt => `${query} ${fmt}`),
+        ...episodeFormats.map(fmt => `${normalizedQuery} ${fmt}`),
+        ...episodeFormats.map(fmt => `${query} ${fmt} CZ`),
+        ...episodeFormats.map(fmt => `${normalizedQuery} ${fmt} CZ`),
+        query,
+        normalizedQuery
       ];
     } else {
       const titleVariants = [
         query,
-        query.replace('&', 'a'), // Lilo & Stitch → Lilo a Stitch
+        query.replace('&', 'a'),
         normalizedQuery,
         normalizedQuery.replace('&', 'a')
       ];
@@ -199,42 +200,34 @@ async function searchPrehrajTo(query, type, season, episode, year) {
         ...titleVariants.map(t => `${t} ${year || new Date().getFullYear()}`),
         ...titleVariants.map(t => `${t} 4K`),
         ...titleVariants.map(t => `${t} CZ`),
-        ...titleVariants.map(t => `${t} topkvalita`) // Pro Minecraft film
+        ...titleVariants.map(t => `${t} topkvalita`)
       ];
     }
 
-    // Remove duplicates
     queries = [...new Set(queries)];
     console.log(`Testované dotazy: ${queries.join(', ')}`);
 
     const items = [];
     const maxResults = 10;
 
-    for (const q of queries) {
-      let page = 1;
-      while (items.length < maxResults) {
-        const url = `${BASE_URL}/hledej/${encodeURIComponent(q)}?vp-page=${page}`;
-        console.log(`Vyhledávám na prehraj.to s dotazem: ${q}, stránka: ${page}`);
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        const response = await axios.get(url, {
-          headers: {
-            'User-Agent': 'kodi/prehraj.to',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;cs;q=0.5',
-            'Referer': BASE_URL,
-            'Connection': 'keep-alive',
-          },
-        });
-        const $ = cheerio.load(response.data);
-        console.log(`Délka HTML odpovědi: ${response.data.length}`);
+    // Use puppeteer to scrape dynamically loaded content
+    const browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    });
 
-        // Debug HTML - výpis do logů
-        if (process.env.DEBUG_HTML) {
-          const safeQuery = q.replace(/[^a-zA-Z0-9]/g, '_');
-          console.log(`=== Začátek HTML pro dotaz: ${safeQuery}_${page} ===`);
-          console.log(response.data.substring(0, 2000)); // Prvních 2000 znaků kvůli velikosti logů
-          console.log(`=== Konec HTML pro dotaz: ${safeQuery}_${page} ===`);
-        }
+    for (const q of queries) {
+      let pageNum = 1;
+      while (items.length < maxResults) {
+        const url = `${BASE_URL}/hledej/${encodeURIComponent(q)}?vp-page=${pageNum}`;
+        console.log(`Vyhledávám na prehraj.to s dotazem: ${q}, stránka: ${pageNum}`);
+
+        const page = await browser.newPage();
+        await page.setUserAgent('kodi/prehraj.to');
+        await page.goto(url, { waitUntil: 'networkidle2' });
+
+        const content = await page.content();
+        const $ = cheerio.load(content);
 
         const titles = $('h3.video__title');
         const sizes = $('div.video__tag--size');
@@ -242,11 +235,12 @@ async function searchPrehrajTo(query, type, season, episode, year) {
         const links = $('a.video--link');
 
         if (titles.length) {
-          console.log(`Nalezeno ${titles.length} výsledků pro dotaz: ${q}, stránka: ${page}`);
+          console.log(`Nalezeno ${titles.length} výsledků pro dotaz: ${q}, stránka: ${pageNum}`);
         } else {
-          console.log(`Žádné výsledky pro dotaz: ${q}, stránka: ${page}`);
+          console.log(`Žádné výsledky pro dotaz: ${q}, stránka: ${pageNum}`);
           const altTitles = $('.video__title, .video-title, .title');
           console.log(`Alternativní selektory nalezly ${altTitles.length} výsledků`);
+          await page.close();
           break;
         }
 
@@ -264,7 +258,8 @@ async function searchPrehrajTo(query, type, season, episode, year) {
           }
         }
 
-        page++;
+        await page.close();
+        pageNum++;
         if (!$('div.pagination-more').length) {
           console.log(`Žádné další stránky pro dotaz: ${q}`);
           break;
@@ -272,6 +267,8 @@ async function searchPrehrajTo(query, type, season, episode, year) {
       }
       if (items.length > 0) break;
     }
+
+    await browser.close();
 
     console.log(`Celkem nalezeno ${items.length} položek pro dotaz: ${query}`);
 
@@ -326,14 +323,14 @@ builder.defineStreamHandler(async ({ type, id }) => {
   }
 });
 
-// Create HTTP server using stremio-addon-sdk's serveHTTP
+// Create HTTP server
 const PORT = process.env.PORT || 8000;
 console.log(`Spouštím server na portu ${PORT}`);
 serveHTTP(builder.getInterface(), { port: PORT }, () => {
   console.log(`HTTP addon dostupný na: http://0.0.0.0:${PORT}/manifest.json`);
 });
 
-// Health check endpoint for Render
+// Health check endpoint
 const healthServer = http.createServer((req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
