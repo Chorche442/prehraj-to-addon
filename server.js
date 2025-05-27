@@ -11,6 +11,7 @@ const builder = new addonBuilder({
   resources: ["stream"],
   types: ["movie", "series"],
   idPrefixes: ["tt"],
+  catalogs: [],
 });
 
 function imdbToQuery(imdbId) {
