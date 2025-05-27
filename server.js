@@ -170,10 +170,10 @@ async function searchPrehrajTo(query) {
 
     const items = [];
     $('.video-list .video').each((i, el) => {
-      const title = $(el).find('.title').text().trim();
+      const title = $(el).find('.info .title').text().trim();
       const href = $(el).find('a').attr('href');
-      const resolution = $(el).find('.quality').text().trim() || 'Unknown';
-      const lang = $(el).find('.lang').text().trim() || 'Unknown';
+      const resolution = $(el).find('.info .quality').text().trim() || 'Unknown';
+      const lang = $(el).find('.info .lang').text().trim() || 'Unknown';
 
       if (href) {
         items.push({
