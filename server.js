@@ -1,4 +1,4 @@
-rrequire('dotenv').config(); // Na Renderu se ignoruje, pokud používáš Environment Variables
+require('dotenv').config(); // Na Renderu se ignoruje, pokud používáš Environment Variables
 const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
 const axios = require('axios');
 const cheerio = require('cheerio');
@@ -19,7 +19,7 @@ if (!TMDB_API_KEY) {
 // Define the addon
 const builder = new addonBuilder({
   id: 'org.stremio.prehrajto',
-  version: '1.0.14', // Zvýšena verze
+  version: '1.0.14',
   name: 'Přehraj.to',
   description: 'Streamy z prehraj.to',
   resources: ['stream'],
@@ -208,7 +208,7 @@ async function searchPrehrajTo(query, type, season, episode, year) {
     try {
       const browser = await puppeteer.launch({
         headless: 'new',
-        executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium-browser', // Render Chromium path
+        executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium-browser',
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
@@ -217,7 +217,7 @@ async function searchPrehrajTo(query, type, season, episode, year) {
           '--single-process',
           '--no-zygote'
         ],
-        userDataDir: '/tmp/puppeteer_cache' // Cache na Renderu
+        userDataDir: '/tmp/puppeteer_cache'
       });
 
       for (const q of queries) {
