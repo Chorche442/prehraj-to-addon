@@ -3,6 +3,7 @@ const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const http = require('http');
+const Hjson = require('hjson');
 
 // Configuration
 const BASE_URL = 'https://prehraj.to';
@@ -16,7 +17,7 @@ if (!TMDB_API_KEY) {
 // Define the addon
 const builder = new addonBuilder({
   id: 'org.stremio.prehrajto',
-  version: '1.0.7',
+  version: '1.0.9',
   name: 'Přehraj.to',
   description: 'Streamy z prehraj.to',
   resources: ['stream'],
@@ -38,29 +39,36 @@ function normalizeString(str) {
   return str.replace(/[áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ]/g, match => diacriticsMap[match] || match);
 }
 
+// Function to format season and episode
+function formatSeasonEpisode(season, episode) {
+  const s = season.toString().padStart(2, '0');
+  const e = episode.toString().padStart(2, '0');
+  return [
+    `S${s}E${e}`, // S02E01
+    `${season}x${episode.toString().padStart(2, '0')}` // 2x01
+  ];
+}
+
 // Function to get title from TMDB using IMDb ID
-async function getTitleFromTMDB(imdbId) {
+async function getTitleFromTMDB(imdbId, type, season, episode) {
   try {
     const cleanImdbId = imdbId.split(':')[0];
     if (!cleanImdbId.startsWith('tt') || !/tt\d{7,8}/i.test(cleanImdbId)) {
       throw new Error('Neplatný formát IMDb ID');
     }
 
-    let title;
+    let title, czechTitle;
     let response = await axios.get(
       `https://api.themoviedb.org/3/find/${cleanImdbId}?api_key=${encodeURIComponent(TMDB_API_KEY)}&external_source=imdb_id&language=cs-CZ`,
-      {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-      }
+      { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } }
     );
     title = response.data.movie_results[0]?.title || response.data.tv_results[0]?.name;
+    czechTitle = title;
 
     if (!title) {
       response = await axios.get(
         `https://api.themoviedb.org/3/find/${cleanImdbId}?api_key=${encodeURIComponent(TMDB_API_KEY)}&external_source=imdb_id&language=en-US`,
-        {
-          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-        }
+        { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } }
       );
       title = response.data.movie_results[0]?.title || response.data.tv_results[0]?.name;
     }
@@ -68,8 +76,9 @@ async function getTitleFromTMDB(imdbId) {
     if (!title) {
       throw new Error(`Nenalezen název pro IMDb ID: ${cleanImdbId}`);
     }
-    console.log(`TMDB dotaz pro ${cleanImdbId}: ${title}`);
-    return title;
+
+    console.log(`TMDB dotaz pro ${cleanImdbId}: ${title} (CZ: ${czechTitle})`);
+    return { title, czechTitle: czechTitle || title, season, episode };
   } catch (err) {
     console.error(`TMDB API chyba pro ${imdbId}: ${err.message}`);
     throw err;
@@ -94,7 +103,7 @@ async function getStreamUrl(videoPageUrl) {
     let streamUrl = null;
     let subtitles = null;
 
-    // Try to extract stream URL from var sources (Kodi approach)
+    // Extract stream URL from var sources (Kodi approach)
     const sourcesScript = $('script')
       .filter((i, el) => $(el).html().includes('var sources = ['))
       .html();
@@ -116,53 +125,16 @@ async function getStreamUrl(videoPageUrl) {
       console.error(`Nenalezen script s var sources na ${videoPageUrl}`);
     }
 
-    // Fallback: Check for video tags or player links
+    // Fallback: Check for video tags
     if (!streamUrl) {
       const videoSource = $('video source').attr('src') || $('#video-wrap video').attr('src');
       if (videoSource) {
         streamUrl = videoSource.startsWith('http') ? videoSource : `${BASE_URL}${videoSource}`;
         console.log(`Nalezen stream z video tagu: ${streamUrl}`);
-      } else {
-        const playerLinks = [];
-        $('div.tabs__control-players a').each((i, el) => {
-          const href = $(el).attr('href');
-          if (href) {
-            playerLinks.push(href.startsWith('http') ? href : `${BASE_URL}${href}`);
-          }
-        });
-
-        for (const playerUrl of playerLinks) {
-          console.log(`Zkouším player URL: ${playerUrl}`);
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          const playerResponse = await axios.get(playerUrl, {
-            headers: {
-              'User-Agent': 'kodi/prehraj.to',
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-              'Accept-Language': 'en-US,en;cs;q=0.5',
-              'Referer': videoPageUrl,
-            },
-          });
-          const player$ = cheerio.load(playerResponse.data);
-          const playerScript = player$('script')
-            .filter((i, el) => $(el).html().includes('var sources = ['))
-            .html();
-          if (playerScript) {
-            const sourcesMatch = playerScript.match(/var sources = \[(.*?)\];/s);
-            if (sourcesMatch) {
-              const sources = sourcesMatch[1];
-              const fileMatch = sources.match(/file: "(.*?)"/) || sources.match(/src: "(.*?)"/);
-              if (fileMatch) {
-                streamUrl = fileMatch[1];
-                console.log(`Nalezen stream URL z player stránky: ${streamUrl}`);
-                break;
-              }
-            }
-          }
-        }
       }
     }
 
-    // Extract subtitles from var tracks (Kodi approach)
+    // Extract subtitles from var tracks using Hjson (Kodi approach)
     const tracksScript = $('script')
       .filter((i, el) => $(el).html().includes('var tracks = '))
       .html();
@@ -170,7 +142,7 @@ async function getStreamUrl(videoPageUrl) {
       const tracksMatch = tracksScript.match(/var tracks = (.*?);/s);
       if (tracksMatch) {
         try {
-          const tracksData = JSON.parse(tracksMatch[1]);
+          const tracksData = Hjson.parse(tracksMatch[1]);
           if (tracksData && tracksData[0] && tracksData[0].src) {
             subtitles = [{ url: tracksData[0].src, lang: 'cs' }];
             console.log(`Nalezeny titulky: ${tracksData[0].src}`);
@@ -194,16 +166,32 @@ async function getStreamUrl(videoPageUrl) {
 }
 
 // Function to search on prehraj.to (mimic Kodi's search)
-async function searchPrehrajTo(query) {
+async function searchPrehrajTo(query, type, season, episode) {
   try {
     const normalizedQuery = normalizeString(query);
     console.log(`Normalizovaný dotaz: ${normalizedQuery}`);
-    const queries = [
-      normalizedQuery,
-      `${normalizedQuery} ${new Date().getFullYear()}`,
-      `${normalizedQuery} 4K`,
-      query
-    ];
+    let queries = [];
+
+    if (type === 'series' && season && episode) {
+      const episodeFormats = formatSeasonEpisode(season, episode);
+      queries = [
+        ...episodeFormats.map(fmt => `${query} ${fmt}`), // Poslední z nás S02E01
+        ...episodeFormats.map(fmt => `${normalizedQuery} ${fmt}`), // Posledni z nas S02E01
+        ...episodeFormats.map(fmt => `${query} ${fmt} CZ`), // Poslední z nás S02E01 CZ
+        ...episodeFormats.map(fmt => `${normalizedQuery} ${fmt} CZ`), // Posledni z nas S02E01 CZ
+        query, // Poslední z nás
+        normalizedQuery // Posledni z nas
+      ];
+    } else {
+      queries = [
+        query,
+        normalizedQuery,
+        `${query} ${new Date().getFullYear()}`,
+        `${normalizedQuery} ${new Date().getFullYear()}`,
+        `${query} 4K`,
+        `${normalizedQuery} 4K`
+      ];
+    }
 
     const items = [];
     const maxResults = 10;
@@ -291,8 +279,20 @@ async function searchPrehrajTo(query) {
 builder.defineStreamHandler(async ({ type, id }) => {
   console.log(`Zpracovávám požadavek pro typ: ${type}, id: ${id}`);
   try {
-    const query = await getTitleFromTMDB(id);
-    const results = await searchPrehrajTo(query);
+    let season, episode;
+    let cleanId = id;
+
+    // Parse season and episode for series
+    if (type === 'series' && id.includes(':')) {
+      const parts = id.split(':');
+      cleanId = parts[0];
+      season = parseInt(parts[1], 10);
+      episode = parseInt(parts[2], 10);
+    }
+
+    const { title, czechTitle } = await getTitleFromTMDB(cleanId, type, season, episode);
+    const query = type === 'series' ? czechTitle : title; // Prefer Czech title for series
+    const results = await searchPrehrajTo(query, type, season, episode);
     const streams = results.map((item) => ({
       title: item.title,
       url: item.url,
