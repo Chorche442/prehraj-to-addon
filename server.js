@@ -34,13 +34,28 @@ async function imdbToQuery(imdbId) {
     if (!cleanImdbId.startsWith('tt') || !/tt\d{7,8}/.test(cleanImdbId)) {
       throw new Error('Invalid IMDb ID format');
     }
-    const response = await axios.get(
+
+    // Try Czech title first
+    let title;
+    let response = await axios.get(
       `https://api.themoviedb.org/3/find/${cleanImdbId}?api_key=${TMDB_API_KEY}&external_source=imdb_id&language=cs-CZ`,
       {
         headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
       }
     );
-    const title = response.data.movie_results[0]?.title || response.data.tv_results[0]?.name;
+    title = response.data.movie_results[0]?.title || response.data.tv_results[0]?.name;
+
+    // Fallback to English title if Czech title is not found
+    if (!title) {
+      response = await axios.get(
+        `https://api.themoviedb.org/3/find/${cleanImdbId}?api_key=${TMDB_API_KEY}&external_source=imdb_id&language=en-US`,
+        {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+        }
+      );
+      title = response.data.movie_results[0]?.title || response.data.tv_results[0]?.name;
+    }
+
     if (!title) {
       throw new Error(`No title found for IMDb ID: ${cleanImdbId}`);
     }
@@ -113,7 +128,7 @@ async function getStreamUrl(videoPageUrl) {
         try {
           const tracksData = JSON.parse(tracksMatch[1]);
           if (tracksData && tracksData[0] && tracksData[0].src) {
-            subtitles = [{ url: tracksData[0].src, lang: 'cs' }]; // Assuming Czech subtitles
+            subtitles = [{ url: tracksData[0].src, lang: 'cs' }];
             console.log(`Extracted subtitles: ${tracksData[0].src}`);
           }
         } catch (err) {
@@ -148,13 +163,17 @@ async function searchPrehrajTo(query) {
     });
     const $ = cheerio.load(response.data);
     console.log(`HTML response length: ${response.data.length}`);
+    // Debug: Print first 2 video items' HTML
+    $('.video-list .video').slice(0, 2).each((i, el) => {
+      console.log(`Video item ${i + 1} HTML: ${$(el).html()}`);
+    });
 
     const items = [];
-    $('.video-item').each((i, el) => { // NAHRAĎ: aktuální třída pro video blok
-      const title = $(el).find('.title').text().trim(); // NAHRAĎ: aktuální třída pro název
+    $('.video-list .video').each((i, el) => {
+      const title = $(el).find('.title').text().trim();
       const href = $(el).find('a').attr('href');
-      const resolution = $(el).find('.quality').text().trim() || 'Unknown'; // NAHRAĎ: aktuální třída pro rozlišení
-      const lang = $(el).find('.lang').text().trim() || 'Unknown'; // NAHRAĎ: aktuální třída pro jazyk
+      const resolution = $(el).find('.quality').text().trim() || 'Unknown';
+      const lang = $(el).find('.lang').text().trim() || 'Unknown';
 
       if (href) {
         items.push({
