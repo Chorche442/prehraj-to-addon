@@ -9,13 +9,14 @@ const BASE_URL = 'https://prehraj.to';
 const TMDB_API_KEY = process.env.TMDB_KEY;
 
 if (!TMDB_API_KEY) {
-  throw new Error('TMDB_KEY není definován v .env nebo v prostředí');
+  console.error('Chyba: TMDB_KEY není definován v .env nebo v prostředí');
+  process.exit(1); // Exit to prevent hanging
 }
 
 // Define the addon
 const builder = new addonBuilder({
   id: 'org.stremio.prehrajto',
-  version: '1.0.4',
+  version: '1.0.5',
   name: 'Přehraj.to',
   description: 'Streamy z prehraj.to',
   resources: ['stream'],
@@ -28,10 +29,9 @@ const builder = new addonBuilder({
 
 // Function to normalize string (mimic Kodi's encode)
 function normalizeString(str) {
-  // Simple diacritics removal for Czech characters
   const diacriticsMap = {
-    'á': 'a', 'č': 'c', 'ď': 'd', 'é': 'e', 'ě': 'e', 'í': 'i', 'í: 'y', 'ň': 'n', 'ý': 'y',
-    'ó': 'o', 'ř': 'r', 'š': 's', 'ť': 't', 'ú': 'u', 'ů': 'u', 'ý': 'y', 'ž': 'z',
+    'á': 'a', 'č': 'c', 'ď': 'd', 'é': 'e', 'ě': 'e', 'í': 'i', 'ň': 'n', 'ó': 'o',
+    'ř': 'r', 'š': 's', 'ť': 't', 'ú': 'u', 'ů': 'u', 'ý': 'y', 'ž': 'z',
     'Á': 'A', 'Č': 'C', 'Ď': 'D', 'É': 'E', 'Ě': 'E', 'Í': 'I', 'Ň': 'N', 'Ó': 'O',
     'Ř': 'R', 'Š': 'S', 'Ť': 'T', 'Ú': 'U', 'Ů': 'U', 'Ý': 'Y', 'Ž': 'Z'
   };
@@ -123,7 +123,6 @@ async function getStreamUrl(videoPageUrl) {
         streamUrl = videoSource.startsWith('http') ? videoSource : `${BASE_URL}${videoSource}`;
         console.log(`Nalezen stream z video tagu: ${streamUrl}`);
       } else {
-        // Try player links (e.g., ?player=videojs-nuevo)
         const playerLinks = [];
         $('div.tabs__control-players a').each((i, el) => {
           const href = $(el).attr('href');
@@ -134,7 +133,7 @@ async function getStreamUrl(videoPageUrl) {
 
         for (const playerUrl of playerLinks) {
           console.log(`Zkouším player URL: ${playerUrl}`);
-          await new Promise(resolve => setTimeout(resolve, 1000)); // Prevent rate limiting
+          await new Promise(resolve => setTimeout(resolve, 1000));
           const playerResponse = await axios.get(playerUrl, {
             headers: {
               'User-Agent': 'kodi/prehraj.to',
@@ -197,26 +196,24 @@ async function getStreamUrl(videoPageUrl) {
 // Function to search on prehraj.to (mimic Kodi's search)
 async function searchPrehrajTo(query) {
   try {
-    // Normalize query like Kodi
     const normalizedQuery = normalizeString(query);
     console.log(`Normalizovaný dotaz: ${normalizedQuery}`);
-    // Try multiple query variations
     const queries = [
       normalizedQuery,
       `${normalizedQuery} ${new Date().getFullYear()}`,
       `${normalizedQuery} 4K`,
-      query // Original query as fallback
+      query
     ];
 
     const items = [];
-    const maxResults = 10; // Kodi-like limit
+    const maxResults = 10;
 
     for (const q of queries) {
       let page = 1;
       while (items.length < maxResults) {
         const url = `${BASE_URL}/hledej/${encodeURIComponent(q)}?vp-page=${page}`;
         console.log(`Vyhledávám na prehraj.to s dotazem: ${q}, stránka: ${page}`);
-        await new Promise(resolve => setTimeout(resolve, 1000)); // Prevent rate limiting
+        await new Promise(resolve => setTimeout(resolve, 1000));
         const response = await axios.get(url, {
           headers: {
             'User-Agent': 'kodi/prehraj.to',
@@ -228,7 +225,12 @@ async function searchPrehrajTo(query) {
         const $ = cheerio.load(response.data);
         console.log(`Délka HTML odpovědi: ${response.data.length}`);
 
-        // Use Kodi-like selectors
+        // Debug: Save HTML for analysis
+        if (process.env.DEBUG_HTML) {
+          require('fs').writeFileSync(`debug_${q}_${page}.html`, response.data);
+          console.log(`HTML uloženo do debug_${q}_${page}.html`);
+        }
+
         const titles = $('h3.video__title');
         const sizes = $('div.video__tag--size');
         const times = $('div.video__tag--time');
@@ -259,12 +261,11 @@ async function searchPrehrajTo(query) {
           break;
         }
       }
-      if (items.length > 0) break; // Stop if we found results
+      if (items.length > 0) break;
     }
 
     console.log(`Nalezeno ${items.length} položek pro dotaz: ${query}`);
 
-    // Fetch direct stream URLs and subtitles for each item
     const streamItems = [];
     for (const item of items) {
       const streamData = await getStreamUrl(item.url);
@@ -306,6 +307,7 @@ builder.defineStreamHandler(async ({ type, id }) => {
 
 // Create HTTP server using stremio-addon-sdk's serveHTTP
 const PORT = process.env.PORT || 10000;
+console.log(`Spouštím server na portu ${PORT}`);
 serveHTTP(builder.getInterface(), { port: PORT }, () => {
   console.log(`HTTP addon dostupný na: http://0.0.0.0:${PORT}/manifest.json`);
 });
