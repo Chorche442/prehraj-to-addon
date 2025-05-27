@@ -35,7 +35,7 @@ async function imdbToQuery(imdbId) {
       throw new Error('Invalid IMDb ID format');
     }
     const response = await axios.get(
-      `https://api.themoviedb.org/3/find/${cleanImdbId}?api_key=${TMDB_API_KEY}&external_source=imdb_id`,
+      `https://api.themoviedb.org/3/find/${cleanImdbId}?api_key=${TMDB_API_KEY}&external_source=imdb_id&language=cs-CZ`,
       {
         headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
       }
@@ -52,7 +52,7 @@ async function imdbToQuery(imdbId) {
   }
 }
 
-// Function to extract direct stream URL from prehraj.to video page
+// Function to extract direct stream URL and subtitles from prehraj.to video page
 async function getStreamUrl(videoPageUrl) {
   try {
     const response = await axios.get(videoPageUrl, {
@@ -66,32 +66,67 @@ async function getStreamUrl(videoPageUrl) {
     const $ = cheerio.load(response.data);
 
     // Find the script tag containing "var sources = [...]"
+    const sourcesPattern = /var sources = \[(.*?)\];/s;
     const script = $('script').filter((i, el) => {
       return $(el).html().includes('var sources = [');
     }).html();
 
-    if (!script) {
+    let streamUrl = null;
+    if (script) {
+      const sourcesMatch = script.match(sourcesPattern);
+      if (sourcesMatch) {
+        const sources = sourcesMatch[1];
+        const fileMatch = sources.match(/file: "(.*?)"/);
+        if (fileMatch) {
+          streamUrl = fileMatch[1];
+          console.log(`Extracted stream URL: ${streamUrl}`);
+        } else {
+          console.error(`No file URL found in sources on ${videoPageUrl}`);
+        }
+      } else {
+        console.error(`No sources array found in script on ${videoPageUrl}`);
+      }
+    } else {
       console.error(`No script with sources found on ${videoPageUrl}`);
+    }
+
+    // Fallback: Try to find src: "..." if file: "..." fails
+    if (!streamUrl) {
+      const srcMatch = script ? script.match(/src: "(.*?)"/) : null;
+      if (srcMatch) {
+        streamUrl = srcMatch[1];
+        console.log(`Extracted fallback stream URL: ${streamUrl}`);
+      } else {
+        console.error(`No src URL found in script on ${videoPageUrl}`);
+      }
+    }
+
+    // Optionally extract subtitles from var tracks = ...
+    let subtitles = null;
+    const tracksPattern = /var tracks = (.*?);/s;
+    const tracksScript = $('script').filter((i, el) => {
+      return $(el).html().includes('var tracks = ');
+    }).html();
+    if (tracksScript) {
+      const tracksMatch = tracksScript.match(tracksPattern);
+      if (tracksMatch) {
+        try {
+          const tracksData = JSON.parse(tracksMatch[1]);
+          if (tracksData && tracksData[0] && tracksData[0].src) {
+            subtitles = [{ url: tracksData[0].src, lang: 'cs' }]; // Assuming Czech subtitles
+            console.log(`Extracted subtitles: ${tracksData[0].src}`);
+          }
+        } catch (err) {
+          console.error(`Error parsing tracks on ${videoPageUrl}:`, err.message);
+        }
+      }
+    }
+
+    if (!streamUrl) {
       return null;
     }
 
-    // Extract sources using regex
-    const sourcesMatch = script.match(/var sources = \[(.*?)\];/s);
-    if (!sourcesMatch) {
-      console.error(`No sources array found in script on ${videoPageUrl}`);
-      return null;
-    }
-
-    const sources = sourcesMatch[1];
-    const fileMatch = sources.match(/file: "(.*?)"/);
-    if (!fileMatch) {
-      console.error(`No file URL found in sources on ${videoPageUrl}`);
-      return null;
-    }
-
-    const streamUrl = fileMatch[1];
-    console.log(`Extracted stream URL: ${streamUrl}`);
-    return streamUrl;
+    return { url: streamUrl, subtitles };
   } catch (err) {
     console.error(`Error fetching stream URL from ${videoPageUrl}:`, err.message);
     return null;
@@ -115,11 +150,11 @@ async function searchPrehrajTo(query) {
     console.log(`HTML response length: ${response.data.length}`);
 
     const items = [];
-    $('.video-block').each((i, el) => { // Update with current class if needed
-      const title = $(el).find('.video-title').text().trim(); // Update with current class
+    $('.video-item').each((i, el) => { // NAHRAĎ: aktuální třída pro video blok
+      const title = $(el).find('.title').text().trim(); // NAHRAĎ: aktuální třída pro název
       const href = $(el).find('a').attr('href');
-      const resolution = $(el).find('.label-quality').text().trim() || 'Unknown'; // Update with current class
-      const lang = $(el).find('.label-lang').text().trim() || 'Unknown'; // Update with current class
+      const resolution = $(el).find('.quality').text().trim() || 'Unknown'; // NAHRAĎ: aktuální třída pro rozlišení
+      const lang = $(el).find('.lang').text().trim() || 'Unknown'; // NAHRAĎ: aktuální třída pro jazyk
 
       if (href) {
         items.push({
@@ -130,14 +165,15 @@ async function searchPrehrajTo(query) {
     });
     console.log(`Found ${items.length} items for query: ${query}`);
 
-    // Fetch direct stream URLs for each item
+    // Fetch direct stream URLs and subtitles for each item
     const streamItems = [];
     for (const item of items) {
-      const streamUrl = await getStreamUrl(item.url);
-      if (streamUrl) {
+      const streamData = await getStreamUrl(item.url);
+      if (streamData) {
         streamItems.push({
           title: item.title,
-          url: streamUrl,
+          url: streamData.url,
+          subtitles: streamData.subtitles,
         });
       }
     }
@@ -159,6 +195,7 @@ builder.defineStreamHandler(async ({ type, id }) => {
       title: item.title,
       url: item.url,
       externalUrl: true,
+      subtitles: item.subtitles,
     }));
     console.log(`Returning ${streams.length} streams for ${id}`);
     return { streams };
