@@ -12,7 +12,7 @@ const searchCache = new Map();
 
 const builder = new addonBuilder({
   id: 'org.stremio.prehrajto',
-  version: '1.0.19', // Zvýšil jsem verzi kvůli změnám
+  version: '1.0.19',
   name: 'prehraj-to',
   description: 'Streamy z prehraj.to',
   resources: ['stream'],
@@ -53,7 +53,7 @@ async function getTitleFromTMDB(imdbId, type, season, episode) {
     let response = await cloudscraper.get({
       uri: `https://api.themoviedb.org/3/find/${encodeURIComponent(cleanImdbId)}?api_key=${encodeURIComponent(TMDB_API_KEY)}&external_source=imdb_id&language=cs-CZ}`,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
       }
     });
     const data = JSON.parse(response);
@@ -67,7 +67,7 @@ async function getTitleFromTMDB(imdbId, type, season, episode) {
       response = await cloudscraper.get({
         uri: `https://api.themoviedb.org/3/find/${encodeURIComponent(cleanImdbId)}?api_key=${encodeURIComponent(TMDB_API_KEY)}&external_source=imdb_id&language=en-US}`,
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
         }
       });
       const data = JSON.parse(response);
@@ -128,12 +128,17 @@ async function searchPrehrajTo(query, type, season, episode, year) {
     let page = 1;
 
     const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-      'Accept-Language': 'cs-CZ,cs;q=0.9,en;q=0.8',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+      'Accept-Language': 'cs-CZ,cs;q=0.9,en-US;q=0.8,en;q=0.7',
       'Accept-Encoding': 'gzip, deflate, br',
       'Connection': 'keep-alive',
-      'Referer': 'https://prehraj.to/'
+      'Referer': 'https://prehraj.to/',
+      'Upgrade-Insecure-Requests': '1',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'same-origin',
+      'Sec-Fetch-User': '?1'
     };
 
     while (items.length < maxResults && page <= 3) {
@@ -157,7 +162,7 @@ async function searchPrehrajTo(query, type, season, episode, year) {
             const size = $(sizes[i]).text().trim() || 'Není známo';
             const time = $(times[i]).text().trim() || 'Není známo';
             const href = $(links[i]).attr('href');
-            if (href) { // Odstraněna podmínka na /video/, protože odkazy mají jiný formát
+            if (href) {
               items.push({
                 title: `${title} [${size} - ${time}]`,
                 url: href.startsWith('http') ? href : `${BASE_URL}${href}`
@@ -169,7 +174,7 @@ async function searchPrehrajTo(query, type, season, episode, year) {
           console.log(`Stránkování nalezeno: ${next.length > 0}`);
           if (!next.length || items.length >= maxResults) break;
 
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          await new Promise(resolve => setTimeout(resolve, 2000)); // Zvýšené zpoždění na 2 sekundy
         } catch (err) {
           console.error(`Chyba při vyhledávání ${q}: ${err.message}`);
         }
@@ -194,12 +199,17 @@ async function getStreamUrl(videoPageUrl) {
   }
 
   const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    'Accept-Language': 'cs-CZ,cs',
-    'Accept-Encoding': 'gzip, deflate',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+    'Accept-Language': 'cs-CZ,cs;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Accept-Encoding': 'gzip, deflate, br',
     'Connection': 'keep-alive',
-    'Referer': 'https://prehraj.to/'
+    'Referer': 'https://prehraj.to/',
+    'Upgrade-Insecure-Requests': '1',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'same-origin',
+    'Sec-Fetch-User': '?1'
   };
 
   try {
@@ -212,7 +222,6 @@ async function getStreamUrl(videoPageUrl) {
     for (let i = 0; i < scripts.length; i++) {
       const scriptContent = $(scripts[i]).html();
       if (scriptContent && /videos\.push/.test(scriptContent)) {
-        // Najdeme všechny streamy v poli videos
         const videoMatches = scriptContent.match(/videos\.push\({ src: "([^"]+)", type: 'video\/mp4', res: '(\d+)', label: '(\d+p)'/g);
         if (videoMatches) {
           for (let match of videoMatches) {
@@ -266,7 +275,6 @@ builder.defineStreamHandler(async ({ type, id }) => {
     for (const item of results) {
       const streamData = await getStreamUrl(item.url);
       if (streamData) {
-        // Přidáme všechny streamy (např. 1080p, 720p) z jednoho videa
         for (const stream of streamData) {
           streams.push({
             title: `${item.title} (${stream.label})`,
