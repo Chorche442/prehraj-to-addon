@@ -1,10 +1,4 @@
 {
-  "name": "prehraj-to-addon",
-  "version": "1.0.18",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-{
   "name": "stremio-prehrajto",
   "version": "1.0.20",
   "dependencies": {
@@ -12,5 +6,11 @@
     "cloudscraper": "^4.6.0",
     "cheerio": "^1.0.0-rc.12",
     "puppeteer": "^22.10.0"
+  },
+  "scripts": {
+    "start": "node server.js"
   }
+{
+  "name": "stremio-prehrajto",
+  "version": "1.0.20"
 }
