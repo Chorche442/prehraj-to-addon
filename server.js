@@ -10,6 +10,9 @@ const CACHE_TTL = 3600000; // 1 hodina
 
 const searchCache = new Map();
 
+// Aktualizované cookies z tvého seznamu
+const COOKIES = '__stripe_mid=964b43e3-f45b-4154-b1c0-4ac04f7d0cdbdaba90; _ga=GA1.1.174869160.1748583180; _ga_VS322J3SPE=GS2.1.s1748583180$o1$g1$t1748585637$j60$l0$h0; _sp_id.d06a=b4da886f-9ad6-4c6a-92c8-bacba001a686.1748583180.1.1748585638..9e9ac885-d682-4b07-a1b5-f85308f33c52..d738784e-f90f-44d8-b4f7-093fabccfb6a.1748583180096.22; _sp_ses.d06a=*; AC=C; popup_mobile-app=closed';
+
 const builder = new addonBuilder({
   id: 'org.stremio.prehrajto',
   version: '1.0.18',
@@ -30,16 +33,16 @@ function normalizeString(str) {
     'Á': 'A', 'Č': 'C', 'Ď': 'D', 'É': 'E', 'Ě': 'E', 'Í': 'I', 'Ň': 'N', 'Ó': 'O',
     'Ř': 'R', 'Š': 'S', 'Ť': 'T', 'Ú': 'U', 'Ů': 'U', 'Ý': 'Y', 'Ž': 'Z'
   };
-  return str.replace(/[áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ]/g, match => diacriticsMap[match] || match);
+  return str.replace(/[áčďéěíňóřííž]/g, match => diacriticsMap[match] || match);
 }
 
 function formatSeasonEpisode(season, episode) {
   const s = season.toString().padStart(2, '0');
   const e = episode.toString().padStart(2, '0');
-  return [`S${s}E${e}`, `${s}x${e}`, `Ep. ${e}`, `Episode ${e}`];
+  return [`S${s}E${e}`, `${s}x${e}`, `Ep ${e}`, `Episode ${e}`];
 }
 
-async function getTitleFromTMDB(imdbId, type, season, episode) {
+async function getTitleFromDB(imdbId, type, season, episode) {
   const cacheKey = `tmdb:${imdbId}:${type}:${season || ''}:${episode || ''}`;
   if (searchCache.has(cacheKey)) {
     const { data, timestamp } = searchCache.get(cacheKey);
@@ -47,12 +50,9 @@ async function getTitleFromTMDB(imdbId, type, season, episode) {
   }
   try {
     const cleanImdbId = imdbId.split(':')[0];
-    if (!cleanImdbId.startsWith('tt') || !/tt\d{7,8}/i.test(cleanImdbId)) {
-      throw new Error('Neplatný formát IMDb ID');
-    }
     let response = await axios.get(
       `https://api.themoviedb.org/3/find/${cleanImdbId}?api_key=${encodeURIComponent(TMDB_API_KEY)}&external_source=imdb_id&language=cs-CZ`,
-      { headers: { 'User-Agent': 'kodi/prehraj.to' } }
+      { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' } }
     );
     const movieResult = response.data.movie_results[0];
     const tvResult = response.data.tv_results[0];
@@ -63,7 +63,7 @@ async function getTitleFromTMDB(imdbId, type, season, episode) {
     if (!title) {
       response = await axios.get(
         `https://api.themoviedb.org/3/find/${cleanImdbId}?api_key=${encodeURIComponent(TMDB_API_KEY)}&external_source=imdb_id&language=en-US`,
-        { headers: { 'User-Agent': 'kodi/prehraj.to' } }
+        { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' } }
       );
       const movieResult = response.data.movie_results[0];
       const tvResult = response.data.tv_results[0];
@@ -121,23 +121,25 @@ async function searchPrehrajTo(query, type, season, episode, year) {
     const maxResults = 10;
     let page = 1;
 
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Accept-Language': 'cs-CZ,cs;q=0.9,en;q=0.8',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Connection': 'keep-alive',
+      'Referer': 'https://prehraj.to/',
+      'Cookie': COOKIES
+    };
+
     while (items.length < maxResults && page <= 3) {
       for (const q of queries) {
         const url = `${BASE_URL}/hledej/${encodeURIComponent(q)}?vp-page=${page}`;
         console.log(`Vyhledávám: ${url}`);
         try {
-          const response = await axios.get(url, {
-            headers: {
-              'User-Agent': 'kodi/prehraj.to',
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-              'Accept-Language': 'cs-CZ,cs;q=0.9,en;q=0.8',
-              'Cookie': 'AC=C; __stripe_mid=964b43e3-f45b-4154-b1c0-4ac04f7d0cdbdaba90; _sp_id.d06a=b4da886f-9ad6-4c6a-92c8-bacba001a686.1748583180.1.1748583213..9e9ac885-d682-4b07-a1b5-f85308f33c52..d738784e-f90f-44d8-b4f7-093fabccfb6a.1748583180096.6; _sp_ses.d06a=*'
-            }
-          });
+          let response = await axios.get(url, { headers });
           console.log(`Stažené HTML (${url}): ${response.data.substring(0, 200)}...`);
           const $ = cheerio.load(response.data);
 
-          // Selektory z main.py
           const titles = $('h3.video__title');
           const sizes = $('div.video__tag--size');
           const times = $('div.video__tag--time');
@@ -162,9 +164,47 @@ async function searchPrehrajTo(query, type, season, episode, year) {
           console.log(`Stránkování nalezeno: ${next.length > 0}`);
           if (!next.length || items.length >= maxResults) break;
 
-          await new Promise(resolve => setTimeout(resolve, 1000)); // Zpoždění 1 sekunda
+          await new Promise(resolve => setTimeout(resolve, 1000));
         } catch (err) {
           console.error(`Chyba při vyhledávání ${q}: ${err.message}`);
+          // Zkus bez cookies
+          try {
+            let response = await axios.get(url, {
+              headers: {
+                ...headers,
+                'Cookie': ''
+              }
+            });
+            console.log(`Stažené HTML bez cookies (${url}): ${response.data.substring(0, 200)}...`);
+            const $ = cheerio.load(response.data);
+
+            const titles = $('h3.video__title');
+            const sizes = $('div.video__tag--size');
+            const times = $('div.video__tag--time');
+            const links = $('a.video--link');
+
+            console.log(`Nalezeno ${titles.length} titulů pro dotaz ${q} bez cookies`);
+
+            for (let i = 0; i < titles.length && items.length < maxResults; i++) {
+              const title = $(titles[i]).text().trim();
+              const size = $(sizes[i]).text().trim() || 'Není známo';
+              const time = $(times[i]).text().trim() || 'Není známo';
+              const href = $(links[i]).attr('href');
+              if (href && href.includes('/video/')) {
+                items.push({
+                  title: `${title} [${size} - ${time}]`,
+                  url: href.startsWith('http') ? href : `${BASE_URL}${href}`
+                });
+              }
+            }
+
+            const next = $('div.pagination-more');
+            if (!next.length || items.length >= maxResults) break;
+
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          } catch (err) {
+            console.error(`Chyba při vyhledávání ${q} bez cookies: ${err.message}`);
+          }
         }
       }
       page++;
@@ -186,20 +226,22 @@ async function getStreamUrl(videoPageUrl) {
     if (Date.now() - timestamp < CACHE_TTL) return data;
   }
 
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Accept-Language': 'cs-CZ,cs;q=0.9,en;q=0.8',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'keep-alive',
+    'Referer': 'https://prehraj.to/',
+    'Cookie': COOKIES
+  };
+
   try {
-    const response = await axios.get(videoPageUrl, {
-      headers: {
-        'User-Agent': 'kodi/prehraj.to',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'cs-CZ,cs;q=0.9,en;q=0.8',
-        'Cookie': 'AC=C; __stripe_mid=964b43e3-f45b-4154-b1c0-4ac04f7d0cdbdaba90; _sp_id.d06a=b4da886f-9ad6-4c6a-92c8-bacba001a686.1748583180.1.1748583213..9e9ac885-d682-4b07-a1b5-f85308f33c52..d738784e-f90f-44d8-b4f7-093fabccfb6a.1748583180096.6; _sp_ses.d06a=*'
-      }
-    });
+    let response = await axios.get(videoPageUrl, { headers });
     console.log(`Stažené HTML (${videoPageUrl}): ${response.data.substring(0, 200)}...`);
     const $ = cheerio.load(response.data);
 
     let streamUrl = null;
-    // Logika z get_link v main.py
     const scripts = $('script');
     for (let i = 0; i < scripts.length; i++) {
       const scriptContent = $(scripts[i]).html();
@@ -221,7 +263,41 @@ async function getStreamUrl(videoPageUrl) {
     return data;
   } catch (err) {
     console.error(`Chyba při získávání streamu ${videoPageUrl}: ${err.message}`);
-    return null;
+    // Zkus bez cookies
+    try {
+      let response = await axios.get(videoPageUrl, {
+        headers: {
+          ...headers,
+          'Cookie': ''
+        }
+      });
+      console.log(`Stažené HTML bez cookies (${videoPageUrl}): ${response.data.substring(0, 200)}...`);
+      const $ = cheerio.load(response.data);
+
+      let streamUrl = null;
+      const scripts = $('script');
+      for (let i = 0; i < scripts.length; i++) {
+        const scriptContent = $(scripts[i]).html();
+        if (scriptContent && /var\s+sources\s*=\s*\[/.test(scriptContent)) {
+          const sourcesMatch = scriptContent.match(/var sources = \[(.*?)\];/s);
+          if (sourcesMatch) {
+            const fileMatch = sourcesMatch[1].match(/file: "(.*?)"/) || sourcesMatch[1].match(/src: "(.*?)"/);
+            if (fileMatch) {
+              streamUrl = fileMatch[1];
+              break;
+            }
+          }
+        }
+      }
+
+      console.log(`Stream URL bez cookies pro ${videoPageUrl}: ${streamUrl || 'nenalezena'}`);
+      const data = streamUrl ? { url: streamUrl } : null;
+      searchCache.set(cacheKey, { data, timestamp: Date.now() });
+      return data;
+    } catch (err) {
+      console.error(`Chyba při získávání streamu ${videoPageUrl} bez cookies: ${err.message}`);
+      return null;
+    }
   }
 }
 
@@ -238,7 +314,7 @@ builder.defineStreamHandler(async ({ type, id }) => {
       episode = parseInt(parts[2], 10);
     }
 
-    const titleInfo = await getTitleFromTMDB(cleanId, type, season, episode);
+    const titleInfo = await getTitleFromDB(cleanId, type, season, episode);
     if (!titleInfo) {
       console.log(`Žádné TMDB data pro ${id}`);
       return { streams: [] };
