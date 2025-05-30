@@ -1,12 +1,9 @@
 {
-  "id": "org.stremio.prehrajto",
+  "id": "com.prehraj-to",
   "version": "1.0.0",
-  "name": "Prehraj.to",
-  "description": "Streams from prehraj.to",
+  "name": "prehraj-to",
+  "description": "Streamuje filmy a seriály z prehraj.to",
   "types": ["movie", "series"],
-  "catalogs": [],
   "resources": ["stream"],
-  "idPrefixes": ["tt"],
-  "logo": "https://stremio.com/website/stremio-logo.png",
-  "behaviorHints": { "adult": false }
+  "idPrefixes": ["tt"]
 }
