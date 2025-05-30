@@ -1,6 +1,6 @@
 require('dotenv').config();
 const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core'); // Používáme puppeteer-core
 const cheerio = require('cheerio');
 
 const PORT = process.env.PORT || 10000;
@@ -93,7 +93,14 @@ async function getBrowser() {
   if (!browserInstance) {
     browserInstance = await puppeteer.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-zygote'
+      ],
+      executablePath: '/usr/bin/chromium-browser', // Cesta k Chromiu nainstalovanému přes apt-get
       timeout: 60000
     });
   }
@@ -292,7 +299,6 @@ builder.defineStreamHandler(async ({ type, id }) => {
     console.error(`Chyba handleru: ${err.message}`);
     return { streams: [] };
   } finally {
-    // Uzavření prohlížeče po dokončení požadavku
     if (browserInstance) {
       await browserInstance.close();
       browserInstance = null;
@@ -301,5 +307,5 @@ builder.defineStreamHandler(async ({ type, id }) => {
 });
 
 serveHTTP(builder.getInterface(), { port: PORT, host: '0.0.0.0' }, () => {
-  console.log(`Addon běží na http://0.0.0.0:${PORT}/manifest.json`);
+  console.log(`HTTP addon accessible at: http://127.0.0.1:${PORT}/manifest.json`);
 });
