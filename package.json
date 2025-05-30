@@ -10,7 +10,4 @@
   "scripts": {
     "start": "node server.js"
   }
-{
-  "name": "stremio-prehrajto",
-  "version": "1.0.20"
 }
