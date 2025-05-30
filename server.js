@@ -6,7 +6,7 @@ const cheerio = require('cheerio');
 const PORT = process.env.PORT || 10000;
 const BASE_URL = 'https://prehraj.to';
 const TMDB_API_KEY = process.env.TMDB_KEY || '1f0150a5f78d4adc2407911989fdb66c';
-const CACHE_TTL = 3600000; // 1 hour
+const CACHE_TTL = 3600000; // 1 hodina
 
 const searchCache = new Map();
 
@@ -124,26 +124,27 @@ async function searchPrehrajTo(query, type, season, episode, year) {
     while (items.length < maxResults && page <= 3) {
       for (const q of queries) {
         const url = `${BASE_URL}/hledej/${encodeURIComponent(q)}?vp-page=${page}`;
-        console.log(`Vyhledávám: ${url}`);
+        console.log(`Vyhledávací URL: ${url}`);
         try {
           const response = await axios.get(url, {
             headers: {
-              'User-Agent': 'kodi/prehraj.to',
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
               'Accept-Language': 'cs-CZ,cs;q=0.9,en;q=0.8',
-              'Cookie': 'AC=C; __stripe_mid=964b43e3-f45b-4154-b1c0-4ac04f7d0cdbdaba90' // Aktualizuj cookies
+              'Cookie': 'AC=C'
             }
           });
           console.log(`Velikost HTML: ${response.data.length} znaků`);
+          console.log(`Stažené HTML: ${response.data.substring(0, 200)}...`);
           const $ = cheerio.load(response.data);
 
-          // Extrémně obecné selektory
-          const titles = $('h3, [class*="title"], [class*="video"] h3, [class*="item"] h3');
-          const sizes = $('[class*="size"], [class*="tag"], [class*="info"]');
-          const times = $('[class*="time"], [class*="duration"], [class*="info"]');
-          const links = $('a[href*="/video/"], [class*="video"], [class*="item"] a');
+          const titles = $('.video-item h3');
+          const sizes = $('.video-item .video-size');
+          const times = $('.video-item .video-duration');
+          const links = $('.video-item a[href*="/video/"]');
 
           console.log(`Nalezeno ${titles.length} titulů, ${links.length} odkazů na stránce ${page} pro dotaz ${q}`);
+          console.log(`Tituly: ${titles.map((i, el) => $(el).text().trim()).get()}`);
 
           for (let i = 0; i < titles.length && items.length < maxResults; i++) {
             const title = $(titles[i]).text().trim();
@@ -157,13 +158,10 @@ async function searchPrehrajTo(query, type, season, episode, year) {
               });
             }
           }
-
-          const next = $('[class*="pagination"], [class*="more"], [class*="next"]');
-          console.log(`Stránkování nalezeno: ${next.length > 0}`);
-          if (!next.length || items.length >= maxResults) break;
         } catch (err) {
           console.error(`Chyba při vyhledávání ${q}: ${err.message}`);
         }
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Zpoždění 1 sekunda
       }
       page++;
     }
@@ -187,34 +185,33 @@ async function getStreamUrl(videoPageUrl) {
   try {
     const response = await axios.get(videoPageUrl, {
       headers: {
-        'User-Agent': 'kodi/prehraj.to',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Accept-Language': 'cs-CZ,cs;q=0.9,en;q=0.8',
-        'Cookie': 'AC=C; __stripe_mid=964b43e3-f45b-4154-b1c0-4ac04f7d0cdbdaba90' // Aktualizuj cookies
+        'Cookie': 'AC=C'
       }
     });
+    console.log(`Stažené HTML pro ${videoPageUrl}: ${response.data.substring(0, 200)}...`);
     const $ = cheerio.load(response.data);
 
     let streamUrl = null;
-    const scripts = $('script');
-    for (let i = 0; i < scripts.length; i++) {
-      const scriptContent = $(scripts[i]).html();
-      if (scriptContent && scriptContent.includes('var sources = [')) {
-        const sourcesMatch = scriptContent.match(/var sources = \[(.*?)\];/s);
-        if (sourcesMatch) {
-          const fileMatch = sourcesMatch[1].match(/file: "(.*?)"/) || sourcesMatch[1].match(/src: "(.*?)"/);
-          if (fileMatch) {
-            streamUrl = fileMatch[1];
-            break;
+    const videoSource = $('video source[src]').attr('src');
+    if (videoSource) {
+      streamUrl = videoSource.startsWith('http') ? videoSource : `${BASE_URL}${videoSource}`;
+    } else {
+      const scripts = $('script');
+      for (let i = 0; i < scripts.length; i++) {
+        const scriptContent = $(scripts[i]).html();
+        if (scriptContent && scriptContent.includes('var sources = [')) {
+          const sourcesMatch = scriptContent.match(/var sources = \[(.*?)\];/s);
+          if (sourcesMatch) {
+            const fileMatch = sourcesMatch[1].match(/file: "(.*?)"/) || sourcesMatch[1].match(/src: "(.*?)"/);
+            if (fileMatch) {
+              streamUrl = fileMatch[1];
+              break;
+            }
           }
         }
-      }
-    }
-
-    if (!streamUrl) {
-      const videoSource = $('video source').attr('src') || $('#video-wrap video').attr('src');
-      if (videoSource) {
-        streamUrl = videoSource.startsWith('http') ? videoSource : `${BASE_URL}${videoSource}`;
       }
     }
 
@@ -273,3 +270,4 @@ builder.defineStreamHandler(async ({ type, id }) => {
 serveHTTP(builder.getInterface(), { port: PORT }, () => {
   console.log(`Addon běží na http://0.0.0.0:${PORT}/manifest.json`);
 });
+
