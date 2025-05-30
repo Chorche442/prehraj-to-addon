@@ -5,13 +5,10 @@
   "scripts": {
     "start": "node server.js"
   },
-  "engines": {
-    "node": ">=18.0.0"
-  },
   "dependencies": {
     "axios": "^1.6.0",
     "cheerio": "^1.0.0-rc.12",
-    "stremio-addon-sdk": "^1.6.5",
-    "dotenv": "^16.0.3"
+    "dotenv": "^16.0.3",
+    "stremio-addon-sdk": "^1.6.5"
   }
 }
