@@ -52,7 +52,7 @@ async function getTitleFromTMDB(imdbId, type, season, episode) {
     }
     let response = await axios.get(
       `https://api.themoviedb.org/3/find/${cleanImdbId}?api_key=${encodeURIComponent(TMDB_API_KEY)}&external_source=imdb_id&language=cs-CZ`,
-      { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' } }
+      { headers: { 'User-Agent': 'kodi/prehraj.to' } }
     );
     const movieResult = response.data.movie_results[0];
     const tvResult = response.data.tv_results[0];
@@ -63,7 +63,7 @@ async function getTitleFromTMDB(imdbId, type, season, episode) {
     if (!title) {
       response = await axios.get(
         `https://api.themoviedb.org/3/find/${cleanImdbId}?api_key=${encodeURIComponent(TMDB_API_KEY)}&external_source=imdb_id&language=en-US`,
-        { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' } }
+        { headers: { 'User-Agent': 'kodi/prehraj.to' } }
       );
       const movieResult = response.data.movie_results[0];
       const tvResult = response.data.tv_results[0];
@@ -128,7 +128,7 @@ async function searchPrehrajTo(query, type, season, episode, year) {
         try {
           const response = await axios.get(url, {
             headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+              'User-Agent': 'kodi/prehraj.to',
               'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
               'Accept-Language': 'cs-CZ,cs;q=0.9,en;q=0.8',
               'Cookie': 'AC=C; __stripe_mid=964b43e3-f45b-4154-b1c0-4ac04f7d0cdbdaba90; _sp_id.d06a=b4da886f-9ad6-4c6a-92c8-bacba001a686.1748583180.1.1748583213..9e9ac885-d682-4b07-a1b5-f85308f33c52..d738784e-f90f-44d8-b4f7-093fabccfb6a.1748583180096.6; _sp_ses.d06a=*'
@@ -137,25 +137,31 @@ async function searchPrehrajTo(query, type, season, episode, year) {
           console.log(`Stažené HTML (${url}): ${response.data.substring(0, 200)}...`);
           const $ = cheerio.load(response.data);
 
-          // Upravené selektory - ZKONTROLUJ A PŘIZPŮSOB PODLE AKTUÁLNÍ STRUKTURY WEBU
-          const videoItems = $('.video-item, .video-box, .item-video');
-          console.log(`Nalezeno ${videoItems.length} položek pro dotaz ${q}`);
-          
-          videoItems.each((i, el) => {
-            if (items.length >= maxResults) return false;
-            const title = $(el).find('h3, .video-title, .title').text().trim();
-            const size = $(el).find('.video-size, .size, .info').text().trim() || 'Není známo';
-            const time = $(el).find('.video-duration, .duration, .time').text().trim() || 'Není známo';
-            const href = $(el).find('a[href*="/video/"]').attr('href');
+          // Selektory z main.py
+          const titles = $('h3.video__title');
+          const sizes = $('div.video__tag--size');
+          const times = $('div.video__tag--time');
+          const links = $('a.video--link');
+
+          console.log(`Nalezeno ${titles.length} titulů pro dotaz ${q}`);
+
+          for (let i = 0; i < titles.length && items.length < maxResults; i++) {
+            const title = $(titles[i]).text().trim();
+            const size = $(sizes[i]).text().trim() || 'Není známo';
+            const time = $(times[i]).text().trim() || 'Není známo';
+            const href = $(links[i]).attr('href');
             if (href && href.includes('/video/')) {
               items.push({
                 title: `${title} [${size} - ${time}]`,
                 url: href.startsWith('http') ? href : `${BASE_URL}${href}`
               });
             }
-          });
+          }
 
-          console.log(`Nalezeno ${items.length} položek na stránce ${page} pro dotaz ${q}`);
+          const next = $('div.pagination-more');
+          console.log(`Stránkování nalezeno: ${next.length > 0}`);
+          if (!next.length || items.length >= maxResults) break;
+
           await new Promise(resolve => setTimeout(resolve, 1000)); // Zpoždění 1 sekunda
         } catch (err) {
           console.error(`Chyba při vyhledávání ${q}: ${err.message}`);
@@ -183,7 +189,7 @@ async function getStreamUrl(videoPageUrl) {
   try {
     const response = await axios.get(videoPageUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'User-Agent': 'kodi/prehraj.to',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         'Accept-Language': 'cs-CZ,cs;q=0.9,en;q=0.8',
         'Cookie': 'AC=C; __stripe_mid=964b43e3-f45b-4154-b1c0-4ac04f7d0cdbdaba90; _sp_id.d06a=b4da886f-9ad6-4c6a-92c8-bacba001a686.1748583180.1.1748583213..9e9ac885-d682-4b07-a1b5-f85308f33c52..d738784e-f90f-44d8-b4f7-093fabccfb6a.1748583180096.6; _sp_ses.d06a=*'
@@ -193,23 +199,17 @@ async function getStreamUrl(videoPageUrl) {
     const $ = cheerio.load(response.data);
 
     let streamUrl = null;
-    // Hledání v <video> tagu
-    const videoSource = $('video source[src]').attr('src') || $('#video-wrap video, .video-player video').attr('src');
-    if (videoSource) {
-      streamUrl = videoSource.startsWith('http') ? videoSource : `${BASE_URL}${videoSource}`;
-    } else {
-      // Hledání v JavaScriptu
-      const scripts = $('script');
-      for (let i = 0; i < scripts.length; i++) {
-        const scriptContent = $(scripts[i]).html();
-        if (scriptContent && /var\s+sources\s*=\s*\[/.test(scriptContent)) {
-          const sourcesMatch = scriptContent.match(/var sources = \[(.*?)\];/s);
-          if (sourcesMatch) {
-            const fileMatch = sourcesMatch[1].match(/file: "(.*?)"/) || sourcesMatch[1].match(/src: "(.*?)"/);
-            if (fileMatch) {
-              streamUrl = fileMatch[1];
-              break;
-            }
+    // Logika z get_link v main.py
+    const scripts = $('script');
+    for (let i = 0; i < scripts.length; i++) {
+      const scriptContent = $(scripts[i]).html();
+      if (scriptContent && /var\s+sources\s*=\s*\[/.test(scriptContent)) {
+        const sourcesMatch = scriptContent.match(/var sources = \[(.*?)\];/s);
+        if (sourcesMatch) {
+          const fileMatch = sourcesMatch[1].match(/file: "(.*?)"/) || sourcesMatch[1].match(/src: "(.*?)"/);
+          if (fileMatch) {
+            streamUrl = fileMatch[1];
+            break;
           }
         }
       }
