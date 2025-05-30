@@ -4,12 +4,13 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
-  },
+{
+  "name": "stremio-prehrajto",
+  "version": "1.0.20",
   "dependencies": {
-    "stremio-addon-sdk": "^1.6.10",
-    "axios": "^1.6.0",
-    "cheerio": "^1.0.0-rc.12",
+    "stremio-addon-sdk": "^1.0.0",
     "cloudscraper": "^4.6.0",
-    "dotenv": "^16.0.0"
+    "cheerio": "^1.0.0-rc.12",
+    "puppeteer": "^22.10.0"
   }
 }
