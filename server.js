@@ -10,12 +10,9 @@ const CACHE_TTL = 3600000; // 1 hodina
 
 const searchCache = new Map();
 
-// Cookies – ponechány, ale cloudscraper by měl zvládnout i bez nich
-const COOKIES = '__stripe_mid=964b43e3-f45b-4154-b1c0-4ac04f7d0cdbdaba90; _ga=GA1.1.174869160.1748583180; _ga_VS322J3SPE=GS2.1.s1748583180$o1$g1$t1748585637$j60$l0$h0; _sp_id.d06a=b4da886f-9ad6-4c6a-92c8-bacba001a686.1748583180.1.1748585638..9e9ac885-d682-4b07-a1b5-f85308f33c52..d738784e-f90f-44d8-b4f7-093fabccfb6a.1748583180096.22; _sp_ses.d06a=*; AC=C; popup_mobile-app=closed';
-
 const builder = new addonBuilder({
   id: 'org.stremio.prehrajto',
-  version: '1.0.18',
+  version: '1.0.19', // Zvýšil jsem verzi kvůli změnám
   name: 'prehraj-to',
   description: 'Streamy z prehraj.to',
   resources: ['stream'],
@@ -136,8 +133,7 @@ async function searchPrehrajTo(query, type, season, episode, year) {
       'Accept-Language': 'cs-CZ,cs;q=0.9,en;q=0.8',
       'Accept-Encoding': 'gzip, deflate, br',
       'Connection': 'keep-alive',
-      'Referer': 'https://prehraj.to/',
-      'Cookie': COOKIES
+      'Referer': 'https://prehraj.to/'
     };
 
     while (items.length < maxResults && page <= 3) {
@@ -161,7 +157,7 @@ async function searchPrehrajTo(query, type, season, episode, year) {
             const size = $(sizes[i]).text().trim() || 'Není známo';
             const time = $(times[i]).text().trim() || 'Není známo';
             const href = $(links[i]).attr('href');
-            if (href && href.includes('/video/')) {
+            if (href) { // Odstraněna podmínka na /video/, protože odkazy mají jiný formát
               items.push({
                 title: `${title} [${size} - ${time}]`,
                 url: href.startsWith('http') ? href : `${BASE_URL}${href}`
@@ -203,8 +199,7 @@ async function getStreamUrl(videoPageUrl) {
     'Accept-Language': 'cs-CZ,cs',
     'Accept-Encoding': 'gzip, deflate',
     'Connection': 'keep-alive',
-    'Referer': 'https://prehraj.to/',
-    'Cookie': COOKIES
+    'Referer': 'https://prehraj.to/'
   };
 
   try {
@@ -212,24 +207,31 @@ async function getStreamUrl(videoPageUrl) {
     console.log(`Stažené HTML (${videoPageUrl}): ${response.substring(0, 200)}...`);
     const $ = cheerio.load(response);
 
-    let streamUrl = null;
+    let streams = [];
     const scripts = $('script');
     for (let i = 0; i < scripts.length; i++) {
       const scriptContent = $(scripts[i]).html();
-      if (scriptContent && /var\s+sources\s*=\s*\[/.test(scriptContent)) {
-        const sourcesMatch = scriptContent.match(/var sources = \[(.*?)\];/s);
-        if (sourcesMatch) {
-          const fileMatch = sourcesMatch[1].match(/file: "(.*?)"/) || sourcesMatch[1].match(/src: "(.*?)"/);
-          if (fileMatch) {
-            streamUrl = fileMatch[1];
-            break;
+      if (scriptContent && /videos\.push/.test(scriptContent)) {
+        // Najdeme všechny streamy v poli videos
+        const videoMatches = scriptContent.match(/videos\.push\({ src: "([^"]+)", type: 'video\/mp4', res: '(\d+)', label: '(\d+p)'/g);
+        if (videoMatches) {
+          for (let match of videoMatches) {
+            const srcMatch = match.match(/src: "([^"]+)"/);
+            const labelMatch = match.match(/label: '(\d+p)'/);
+            if (srcMatch && labelMatch) {
+              streams.push({
+                url: srcMatch[1],
+                label: labelMatch[1]
+              });
+            }
           }
         }
+        break;
       }
     }
 
-    console.log(`Stream URL pro ${videoPageUrl}: ${streamUrl || 'nenalezena'}`);
-    const data = streamUrl ? { url: streamUrl } : null;
+    console.log(`Nalezeno ${streams.length} streamů pro ${videoPageUrl}:`, streams);
+    const data = streams.length > 0 ? streams : null;
     searchCache.set(cacheKey, { data, timestamp: Date.now() });
     return data;
   } catch (err) {
@@ -264,15 +266,18 @@ builder.defineStreamHandler(async ({ type, id }) => {
     for (const item of results) {
       const streamData = await getStreamUrl(item.url);
       if (streamData) {
-        streams.push({
-          title: item.title,
-          url: streamData.url,
-          externalUrl: true
-        });
+        // Přidáme všechny streamy (např. 1080p, 720p) z jednoho videa
+        for (const stream of streamData) {
+          streams.push({
+            title: `${item.title} (${stream.label})`,
+            url: stream.url,
+            externalUrl: true
+          });
+        }
       }
     }
 
-    console.log(`Nalezeno ${streams.length} streamů pro ${id}`);
+    console.log(`Nalezeno ${streams.length} streamů pro ${id}:`, streams);
     return { streams };
   } catch (err) {
     console.error(`Chyba handleru: ${err.message}`);
