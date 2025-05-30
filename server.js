@@ -1,6 +1,6 @@
 require('dotenv').config();
 const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
-const cloudscraper = require('cloudscraper');
+const puppeteer = require('puppeteer');
 const cheerio = require('cheerio');
 
 const PORT = process.env.PORT || 10000;
@@ -12,7 +12,7 @@ const searchCache = new Map();
 
 const builder = new addonBuilder({
   id: 'org.stremio.prehrajto',
-  version: '1.0.19',
+  version: '1.0.20',
   name: 'prehraj-to',
   description: 'Streamy z prehraj.to',
   resources: ['stream'],
@@ -50,13 +50,12 @@ async function getTitleFromTMDB(imdbId, type, season, episode) {
     if (!cleanImdbId.startsWith('tt') || !/tt\d{7,8}/i.test(cleanImdbId)) {
       throw new Error('Neplatný formát IMDb ID');
     }
-    let response = await cloudscraper.get({
-      uri: `https://api.themoviedb.org/3/find/${encodeURIComponent(cleanImdbId)}?api_key=${encodeURIComponent(TMDB_API_KEY)}&external_source=imdb_id&language=cs-CZ}`,
+    const response = await fetch(`https://api.themoviedb.org/3/find/${encodeURIComponent(cleanImdbId)}?api_key=${encodeURIComponent(TMDB_API_KEY)}&external_source=imdb_id&language=cs-CZ`, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
       }
     });
-    const data = JSON.parse(response);
+    const data = await response.json();
     const movieResult = data.movie_results[0];
     const tvResult = data.tv_results[0];
     let title = movieResult?.title || tvResult?.name;
@@ -64,17 +63,16 @@ async function getTitleFromTMDB(imdbId, type, season, episode) {
     let year = movieResult?.release_date?.split('-')[0] || tvResult?.first_air_date?.split('-')[0];
 
     if (!title) {
-      response = await cloudscraper.get({
-        uri: `https://api.themoviedb.org/3/find/${encodeURIComponent(cleanImdbId)}?api_key=${encodeURIComponent(TMDB_API_KEY)}&external_source=imdb_id&language=en-US}`,
+      const responseEn = await fetch(`https://api.themoviedb.org/3/find/${encodeURIComponent(cleanImdbId)}?api_key=${encodeURIComponent(TMDB_API_KEY)}&external_source=imdb_id&language=en-US`, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
         }
       });
-      const data = JSON.parse(response);
-      const movieResult = data.movie_results[0];
-      const tvResult = data.tv_results[0];
-      title = movieResult?.title || tvResult?.name;
-      year = movieResult?.release_date?.split('-')[0] || tvResult?.first_air_date?.split('-')[0];
+      const dataEn = await responseEn.json();
+      const movieResultEn = dataEn.movie_results[0];
+      const tvResultEn = dataEn.tv_results[0];
+      title = movieResultEn?.title || tvResultEn?.name;
+      year = movieResultEn?.release_date?.split('-')[0] || tvResultEn?.first_air_date?.split('-')[0];
     }
 
     if (!title) throw new Error(`Nenalezen název pro IMDb ID: ${cleanImdbId}`);
@@ -86,6 +84,20 @@ async function getTitleFromTMDB(imdbId, type, season, episode) {
     console.error(`TMDB chyba pro ${imdbId}: ${err.message}`);
     return null;
   }
+}
+
+// Globální instance prohlížeče pro znovupoužití
+let browserInstance;
+
+async function getBrowser() {
+  if (!browserInstance) {
+    browserInstance = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      timeout: 60000
+    });
+  }
+  return browserInstance;
 }
 
 async function searchPrehrajTo(query, type, season, episode, year) {
@@ -127,28 +139,21 @@ async function searchPrehrajTo(query, type, season, episode, year) {
     const maxResults = 10;
     let page = 1;
 
-    const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-      'Accept-Language': 'cs-CZ,cs;q=0.9,en-US;q=0.8,en;q=0.7',
-      'Accept-Encoding': 'gzip, deflate, br',
-      'Connection': 'keep-alive',
-      'Referer': 'https://prehraj.to/',
-      'Upgrade-Insecure-Requests': '1',
-      'Sec-Fetch-Dest': 'document',
-      'Sec-Fetch-Mode': 'navigate',
-      'Sec-Fetch-Site': 'same-origin',
-      'Sec-Fetch-User': '?1'
-    };
+    const browser = await getBrowser();
 
     while (items.length < maxResults && page <= 3) {
       for (const q of queries) {
         const url = `${BASE_URL}/hledej/${encodeURIComponent(q)}?vp-page=${page}`;
         console.log(`Vyhledávám: ${url}`);
+
+        const pageObj = await browser.newPage();
         try {
-          let response = await cloudscraper.get({ uri: url, headers });
-          console.log(`Stažené HTML (${url}): ${response.substring(0, 200)}...`);
-          const $ = cheerio.load(response);
+          await pageObj.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36');
+          await pageObj.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+          const content = await pageObj.content();
+          console.log(`Stažené HTML (${url}): ${content.substring(0, 200)}...`);
+          const $ = cheerio.load(content);
 
           const titles = $('h3.video__title');
           const sizes = $('div.video__tag--size');
@@ -174,9 +179,11 @@ async function searchPrehrajTo(query, type, season, episode, year) {
           console.log(`Stránkování nalezeno: ${next.length > 0}`);
           if (!next.length || items.length >= maxResults) break;
 
-          await new Promise(resolve => setTimeout(resolve, 2000)); // Zvýšené zpoždění na 2 sekundy
+          await pageObj.close();
+          await new Promise(resolve => setTimeout(resolve, 2000));
         } catch (err) {
           console.error(`Chyba při vyhledávání ${q}: ${err.message}`);
+          await pageObj.close();
         }
       }
       page++;
@@ -198,24 +205,16 @@ async function getStreamUrl(videoPageUrl) {
     if (Date.now() - timestamp < CACHE_TTL) return data;
   }
 
-  const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-    'Accept-Language': 'cs-CZ,cs;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
-    'Referer': 'https://prehraj.to/',
-    'Upgrade-Insecure-Requests': '1',
-    'Sec-Fetch-Dest': 'document',
-    'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'same-origin',
-    'Sec-Fetch-User': '?1'
-  };
+  const browser = await getBrowser();
+  const page = await browser.newPage();
 
   try {
-    let response = await cloudscraper.get({ uri: videoPageUrl, headers });
-    console.log(`Stažené HTML (${videoPageUrl}): ${response.substring(0, 200)}...`);
-    const $ = cheerio.load(response);
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36');
+    await page.goto(videoPageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+    const content = await page.content();
+    console.log(`Stažené HTML (${videoPageUrl}): ${content.substring(0, 200)}...`);
+    const $ = cheerio.load(content);
 
     let streams = [];
     const scripts = $('script');
@@ -242,9 +241,11 @@ async function getStreamUrl(videoPageUrl) {
     console.log(`Nalezeno ${streams.length} streamů pro ${videoPageUrl}:`, streams);
     const data = streams.length > 0 ? streams : null;
     searchCache.set(cacheKey, { data, timestamp: Date.now() });
+    await page.close();
     return data;
   } catch (err) {
     console.error(`Chyba při získání streamu ${videoPageUrl}: ${err.message}`);
+    await page.close();
     return null;
   }
 }
@@ -290,6 +291,12 @@ builder.defineStreamHandler(async ({ type, id }) => {
   } catch (err) {
     console.error(`Chyba handleru: ${err.message}`);
     return { streams: [] };
+  } finally {
+    // Uzavření prohlížeče po dokončení požadavku
+    if (browserInstance) {
+      await browserInstance.close();
+      browserInstance = null;
+    }
   }
 });
 
